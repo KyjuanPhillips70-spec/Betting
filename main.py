@@ -35,6 +35,79 @@ from edge.edge import find_mlb_edges
 from alerting.telegram_alerts import TelegramAlerter, BetAlert
 
 
+# ---------------------------------------------------------------------------
+# Pre-tournament 2026 FIFA World Cup team ratings
+# attack / defense are multipliers relative to an international league average
+# of 1.35 goals per game per team.  Values derived from pre-tournament Elo.
+# Used as fallback when ESPN group-stage standings aren’t yet populated.
+# ---------------------------------------------------------------------------
+_WC_RATINGS: dict[str, dict[str, float]] = {
+    # Tier 1 — elite
+    "Brazil":            {"attack": 1.55, "defense": 0.70},
+    "France":            {"attack": 1.50, "defense": 0.72},
+    "Argentina":         {"attack": 1.50, "defense": 0.72},
+    "Spain":             {"attack": 1.45, "defense": 0.73},
+    "Portugal":          {"attack": 1.45, "defense": 0.74},
+    "Germany":           {"attack": 1.42, "defense": 0.76},
+    "England":           {"attack": 1.40, "defense": 0.75},
+    "Netherlands":       {"attack": 1.38, "defense": 0.78},
+    # Tier 2 — strong
+    "Belgium":           {"attack": 1.25, "defense": 0.85},
+    "Italy":             {"attack": 1.22, "defense": 0.82},
+    "Uruguay":           {"attack": 1.20, "defense": 0.83},
+    "Colombia":          {"attack": 1.20, "defense": 0.85},
+    "Croatia":           {"attack": 1.18, "defense": 0.85},
+    "Denmark":           {"attack": 1.15, "defense": 0.85},
+    "Mexico":            {"attack": 1.15, "defense": 0.88},
+    "Switzerland":       {"attack": 1.12, "defense": 0.86},
+    "United States":     {"attack": 1.10, "defense": 0.90},
+    "USA":               {"attack": 1.10, "defense": 0.90},
+    "Senegal":           {"attack": 1.10, "defense": 0.90},
+    "Morocco":           {"attack": 1.10, "defense": 0.88},
+    "Japan":             {"attack": 1.08, "defense": 0.90},
+    "Austria":           {"attack": 1.05, "defense": 0.97},
+    # Tier 3 — average
+    "Turkey":            {"attack": 1.02, "defense": 1.00},
+    "Norway":            {"attack": 1.02, "defense": 0.98},
+    "Serbia":            {"attack": 0.98, "defense": 1.00},
+    "Czech Republic":    {"attack": 0.98, "defense": 1.02},
+    "South Korea":       {"attack": 0.98, "defense": 1.02},
+    "Ecuador":           {"attack": 1.00, "defense": 1.00},
+    "Ukraine":           {"attack": 1.00, "defense": 1.00},
+    "Sweden":            {"attack": 1.00, "defense": 1.00},
+    "Canada":            {"attack": 0.95, "defense": 1.05},
+    "Poland":            {"attack": 0.95, "defense": 1.02},
+    "Chile":             {"attack": 0.95, "defense": 1.03},
+    "Venezuela":         {"attack": 0.90, "defense": 1.08},
+    "Paraguay":          {"attack": 0.90, "defense": 1.08},
+    "Wales":             {"attack": 0.92, "defense": 1.05},
+    "Peru":              {"attack": 0.92, "defense": 1.05},
+    "Romania":           {"attack": 0.95, "defense": 1.05},
+    # Tier 4 — below average
+    "Bolivia":           {"attack": 0.85, "defense": 1.12},
+    "Nigeria":           {"attack": 0.88, "defense": 1.08},
+    "Ivory Coast":       {"attack": 0.88, "defense": 1.08},
+    "Côte d'Ivoire":    {"attack": 0.88, "defense": 1.08},
+    "Cameroon":          {"attack": 0.85, "defense": 1.10},
+    "Egypt":             {"attack": 0.85, "defense": 1.10},
+    "Algeria":           {"attack": 0.85, "defense": 1.10},
+    "Australia":         {"attack": 0.85, "defense": 1.10},
+    "Ghana":             {"attack": 0.82, "defense": 1.12},
+    "Tunisia":           {"attack": 0.82, "defense": 1.10},
+    "Iran":              {"attack": 0.82, "defense": 1.12},
+    "Saudi Arabia":      {"attack": 0.80, "defense": 1.15},
+    "Costa Rica":        {"attack": 0.78, "defense": 1.15},
+    "New Zealand":       {"attack": 0.75, "defense": 1.18},
+    "Jamaica":           {"attack": 0.75, "defense": 1.18},
+    "Panama":            {"attack": 0.75, "defense": 1.18},
+    "Qatar":             {"attack": 0.72, "defense": 1.20},
+    "Honduras":          {"attack": 0.72, "defense": 1.20},
+    "El Salvador":       {"attack": 0.70, "defense": 1.22},
+    "Indonesia":         {"attack": 0.68, "defense": 1.25},
+    "Cuba":              {"attack": 0.68, "defense": 1.25},
+}
+
+
 def _build_profile(pid, name: str, hand: str, stats: dict) -> PlayerProfile:
     rates = {k: v for k, v in stats.items() if k.endswith("_rate")}
     if not rates:
@@ -70,14 +143,11 @@ def run_mlb(game_date: date | None = None,
     def _match_mlb_team(short_name: str) -> str | None:
         """Match MLB Stats API short name (e.g. 'Giants') to an Odds API event ID."""
         n = short_name.lower()
-        # 1. Exact match
         if n in team_to_event:
             return team_to_event[n]
-        # 2. Substring: 'giants' in 'san francisco giants'
         for full, eid in team_to_event.items():
             if n in full:
                 return eid
-        # 3. Fuzzy match as last resort
         hits = difflib.get_close_matches(n, odds_team_names, n=1, cutoff=0.6)
         return team_to_event[hits[0]] if hits else None
 
@@ -102,7 +172,6 @@ def run_mlb(game_date: date | None = None,
             except Exception as e:
                 logger.warning("Weather fetch failed for {}: {}", venue, e)
 
-        # Park + weather adjustments (combined multiplicatively)
         pf_raw   = get_park_factors(venue)
         park_adj = park_factors_to_pa_adjustments(pf_raw)
         wa = get_weather_adjustments(
@@ -116,7 +185,6 @@ def run_mlb(game_date: date | None = None,
         combined = {k: park_adj.get(k, 1.0) * wa.get(k, 1.0)
                     for k in set(park_adj) | set(wa)}
 
-        # Lineups — use league-average placeholder when confirmed lineup not available
         home_lineup = build_dummy_lineup(9)
         away_lineup = build_dummy_lineup(9)
         home_pitcher = _build_profile(
@@ -128,7 +196,6 @@ def run_mlb(game_date: date | None = None,
             "R", game.get("away_pitcher_stats", {})
         )
 
-        # Monte Carlo simulation
         try:
             sim = run_monte_carlo(home_lineup, away_lineup,
                                    home_pitcher, away_pitcher,
@@ -139,7 +206,6 @@ def run_mlb(game_date: date | None = None,
             logger.error("Sim failed for {}: {}", game["game_pk"], e)
             continue
 
-        # Match odds to this game by team name (short MLB name → full Odds API name)
         eid = (_match_mlb_team(game["home_team"]) or
                _match_mlb_team(game["away_team"]))
         game_odds = odds_by_id.get(eid, [])
@@ -170,8 +236,8 @@ def run_soccer(game_date: date | None = None) -> list[BetAlert]:
     """Soccer pipeline: ESPN standings → Poisson model → Odds API edge detection.
 
     During the 2026 FIFA World Cup (June–July 2026) this scans only World Cup
-    fixtures. Group-stage standings from ESPN are used to calibrate team
-    attack/defense ratings.
+    fixtures.  When ESPN group-stage standings aren’t available yet, falls back
+    to pre-tournament Elo-based ratings stored in _WC_RATINGS.
     """
     import difflib
     from ingestion.espn import get_soccer_standings
@@ -180,42 +246,45 @@ def run_soccer(game_date: date | None = None) -> list[BetAlert]:
 
     logger.info("=== Soccer pipeline (World Cup): {} ===", game_date or date.today())
 
-    LEAGUES = ["world_cup"]
-    HOME_ADV = 1.0   # no home advantage at a neutral-site tournament
+    LEAGUES    = ["world_cup"]
+    HOME_ADV   = 1.0    # neutral-site tournament
+    INTL_AVG   = 1.35   # international goals per game per team
 
     all_alerts: list[BetAlert] = []
 
     for league in LEAGUES:
-        # h2h = 1 credit, totals = 1 credit
         odds_events = get_odds(league, markets="h2h,totals")
         if not odds_events:
             logger.info("No {} odds events today.", league.upper())
             continue
         logger.info("{}: {} fixture(s) with odds", league.upper(), len(odds_events))
 
-        # Group-stage standings calibrate team strength.
-        # Skip if no standings yet (e.g. tournament hasn't started).
+        # Try ESPN group-stage standings first; fall back to pre-tournament ratings.
         standings = get_soccer_standings(league)
-        if not standings:
-            logger.warning("{}: no standings data yet; skipping.", league.upper())
+        if standings:
+            total_gp   = sum(s["games_played"] for s in standings)
+            total_gf   = sum(s["goals_for"]    for s in standings)
+            league_avg = (total_gf / total_gp) if total_gp > 0 else INTL_AVG
+            attack:  dict[str, float] = {}
+            defense: dict[str, float] = {}
+            for row in standings:
+                gp = row["games_played"]
+                attack[row["team_name"]]  = (row["goals_for"]     / gp) / league_avg
+                defense[row["team_name"]] = (row["goals_against"] / gp) / league_avg
+            logger.info("WORLD_CUP: using ESPN standings ({} teams, avg={:.3f})",
+                        len(standings), league_avg)
+        elif league == "world_cup" and _WC_RATINGS:
+            league_avg = INTL_AVG
+            attack  = {k: v["attack"]  for k, v in _WC_RATINGS.items()}
+            defense = {k: v["defense"] for k, v in _WC_RATINGS.items()}
+            logger.info("WORLD_CUP: ESPN standings unavailable; using pre-tournament ratings")
+        else:
+            logger.warning("{}: no standings data; skipping.", league.upper())
             continue
-
-        total_gp = sum(s["games_played"] for s in standings)
-        total_gf = sum(s["goals_for"]    for s in standings)
-        league_avg = (total_gf / total_gp) if total_gp > 0 else 1.35
-        logger.info("World Cup league avg goals/game: {:.3f}", league_avg)
-
-        attack:  dict[str, float] = {}
-        defense: dict[str, float] = {}
-        for row in standings:
-            gp = row["games_played"]
-            attack[row["team_name"]]  = (row["goals_for"]     / gp) / league_avg
-            defense[row["team_name"]] = (row["goals_against"] / gp) / league_avg
 
         espn_names = list(attack.keys())
 
         def _match(name: str) -> str:
-            """Fuzzy-match Odds API team name to ESPN standing name."""
             if name in attack:
                 return name
             hits = difflib.get_close_matches(name, espn_names, n=1, cutoff=0.4)
@@ -305,7 +374,7 @@ def main() -> None:
                         help="Print backtest performance report")
     args = parser.parse_args()
 
-    init_db()   # idempotent — safe to call every run
+    init_db()
 
     if args.report:
         import json
