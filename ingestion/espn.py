@@ -68,6 +68,55 @@ def get_soccer_scoreboard(league_key: str, game_date: date | None = None) -> lis
     return data.get("events", [])
 
 
+def get_soccer_standings(league_key: str) -> list[dict]:
+    """
+    Fetch season standings and return per-team goal stats.
+    Returns list of: {team_name, games_played, goals_for, goals_against}
+    Used to derive attack/defense ratings for the Poisson soccer model.
+    """
+    slug = _SOCCER_SLUGS.get(league_key, league_key)
+    data = _get(f"{SITE_BASE}/sports/soccer/{slug}/standings")
+
+    def _stat(stats_list: list, *names: str) -> float:
+        for s in stats_list:
+            if s.get("name") in names:
+                return float(s.get("value", 0))
+        return 0.0
+
+    results: list[dict] = []
+
+    def _parse_entries(entries: list) -> None:
+        for entry in entries:
+            team = entry.get("team", {})
+            name = (team.get("displayName") or team.get("name", "")).strip()
+            stats = entry.get("stats", [])
+            gp = _stat(stats, "gamesPlayed", "GP")
+            gf = _stat(stats, "pointsFor", "goalsFor", "GF")
+            ga = _stat(stats, "pointsAgainst", "goalsAgainst", "GA")
+            if gp > 0 and name:
+                results.append({
+                    "team_name":     name,
+                    "games_played":  int(gp),
+                    "goals_for":     gf,
+                    "goals_against": ga,
+                })
+
+    # ESPN nests some tables under "children" (e.g. MLS conferences)
+    children = data.get("children", [])
+    if children:
+        for child in children:
+            entries = (child.get("standings", {}).get("entries", [])
+                       or child.get("entries", []))
+            if entries:
+                _parse_entries(entries)
+    else:
+        entries = (data.get("standings", {}).get("entries", [])
+                   or data.get("entries", []))
+        _parse_entries(entries)
+
+    return results
+
+
 def get_game_summary(sport: str, league: str, event_id: str) -> dict:
     return _get(f"{SITE_BASE}/sports/{sport}/{league}/summary", {"event": event_id})
 

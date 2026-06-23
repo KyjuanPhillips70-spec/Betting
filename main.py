@@ -4,6 +4,7 @@ Main entry point — orchestrates ingestion → simulation → edge → alerts.
 Usage:
   python main.py                         # today's MLB card
   python main.py --sport soccer          # soccer only
+  python main.py --sport all             # MLB + soccer
   python main.py --date 2026-07-04       # specific date
   python main.py --sims 5000             # faster (less accurate)
   python main.py --individual            # one Telegram message per bet
@@ -148,6 +149,94 @@ def run_mlb(game_date: date | None = None,
     return all_alerts
 
 
+def run_soccer(game_date: date | None = None) -> list[BetAlert]:
+    """Soccer pipeline: ESPN standings → Poisson model → Odds API edge detection."""
+    import difflib
+    from ingestion.espn import get_soccer_standings
+    from models.soccer_model import build_score_matrix, matrix_to_markets
+    from edge.edge import find_soccer_edges
+
+    logger.info("=== Soccer pipeline: {} ===", game_date or date.today())
+
+    LEAGUES = ["epl", "la_liga", "bundesliga", "serie_a", "ligue1", "mls"]
+    HOME_ADV = 1.15   # home team expected-goals multiplier
+
+    all_alerts: list[BetAlert] = []
+
+    for league in LEAGUES:
+        # h2h = 1 credit, totals = 1 credit per league call
+        odds_events = get_odds(league, markets="h2h,totals")
+        if not odds_events:
+            logger.debug("No {} odds events today.", league)
+            continue
+        logger.info("{}: {} fixture(s) with odds", league.upper(), len(odds_events))
+
+        # Team attack/defense ratings from current standings
+        standings = get_soccer_standings(league)
+        if not standings:
+            logger.warning("No {} standings data; using neutral ratings.", league)
+            # Fall back to neutral 1.0 attack/defense for all teams
+            standings = []
+
+        total_gp = sum(s["games_played"] for s in standings) or 1
+        total_gf = sum(s["goals_for"]    for s in standings) or 1
+        league_avg = total_gf / total_gp          # goals per team per game
+        if league_avg <= 0:
+            league_avg = 1.35   # global soccer baseline
+
+        attack:  dict[str, float] = {}
+        defense: dict[str, float] = {}
+        for row in standings:
+            gp = row["games_played"]
+            attack[row["team_name"]]  = (row["goals_for"]     / gp) / league_avg
+            defense[row["team_name"]] = (row["goals_against"] / gp) / league_avg
+
+        espn_names = list(attack.keys())
+
+        def _match(name: str) -> str:
+            """Fuzzy-match Odds API team name to ESPN standing name."""
+            if name in attack:
+                return name
+            hits = difflib.get_close_matches(name, espn_names, n=1, cutoff=0.4)
+            return hits[0] if hits else name
+
+        league_alerts = 0
+        for event in odds_events:
+            home_raw = event.get("home_team", "")
+            away_raw = event.get("away_team", "")
+            home = _match(home_raw)
+            away = _match(away_raw)
+
+            lam_h = attack.get(home, 1.0) * defense.get(away, 1.0) * league_avg * HOME_ADV
+            lam_a = attack.get(away, 1.0) * defense.get(home, 1.0) * league_avg
+
+            score_mat   = build_score_matrix(lam_h, lam_a)
+            model_probs = matrix_to_markets(score_mat)
+
+            snapshots = parse_odds_to_snapshots([event], "Soccer")
+            fixture   = {"home_team": home_raw, "away_team": away_raw}
+            alerts    = find_soccer_edges(fixture, model_probs, snapshots)
+            for alert in alerts:
+                insert_bet_log({
+                    "sport":       alert.sport,
+                    "event":       alert.event,
+                    "market":      alert.market,
+                    "book":        alert.book,
+                    "line":        alert.line,
+                    "model_prob":  alert.model_prob,
+                    "fair_prob":   alert.fair_prob,
+                    "edge":        alert.edge,
+                    "stake_units": alert.stake_units,
+                    "ev":          alert.edge,
+                })
+            all_alerts.extend(alerts)
+            league_alerts += len(alerts)
+
+        logger.info("{}: {} edge(s) found", league.upper(), league_alerts)
+
+    return all_alerts
+
+
 def run_daily_card(game_date: date | None = None,
                    sport: str = "mlb",
                    consolidated: bool = True,
@@ -164,6 +253,9 @@ def run_daily_card(game_date: date | None = None,
 
     if sport in ("mlb", "all"):
         all_alerts.extend(run_mlb(game_date, n_sims))
+
+    if sport in ("soccer", "all"):
+        all_alerts.extend(run_soccer(game_date))
 
     if not all_alerts:
         logger.info("No +EV bets found today.")
