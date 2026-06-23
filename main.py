@@ -171,18 +171,17 @@ def run_soccer(game_date: date | None = None) -> list[BetAlert]:
             continue
         logger.info("{}: {} fixture(s) with odds", league.upper(), len(odds_events))
 
-        # Team attack/defense ratings from current standings
+        # Team attack/defense ratings from current standings.
+        # Skip league entirely if standings unavailable (off-season) —
+        # neutral ratings produce systematically biased Under predictions.
         standings = get_soccer_standings(league)
         if not standings:
-            logger.warning("No {} standings data; using neutral ratings.", league)
-            # Fall back to neutral 1.0 attack/defense for all teams
-            standings = []
+            logger.warning("{}: no standings data (likely off-season); skipping.", league.upper())
+            continue
 
-        total_gp = sum(s["games_played"] for s in standings) or 1
-        total_gf = sum(s["goals_for"]    for s in standings) or 1
-        league_avg = total_gf / total_gp          # goals per team per game
-        if league_avg <= 0:
-            league_avg = 1.35   # global soccer baseline
+        total_gp = sum(s["games_played"] for s in standings)
+        total_gf = sum(s["goals_for"]    for s in standings)
+        league_avg = (total_gf / total_gp) if total_gp > 0 else 1.35
 
         attack:  dict[str, float] = {}
         defense: dict[str, float] = {}
