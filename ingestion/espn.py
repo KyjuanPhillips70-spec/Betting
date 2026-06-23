@@ -15,9 +15,14 @@ _SESSION = requests.Session()
 _SESSION.headers["User-Agent"] = "BettingBot/1.0 (personal research)"
 
 _SOCCER_SLUGS = {
-    "epl": "eng.1", "la_liga": "esp.1", "bundesliga": "ger.1",
-    "serie_a": "ita.1", "ligue1": "fra.1", "ucl": "uefa.champions",
-    "mls": "usa.1",
+    "world_cup":  "fifa.world",
+    "epl":        "eng.1",
+    "la_liga":    "esp.1",
+    "bundesliga": "ger.1",
+    "serie_a":    "ita.1",
+    "ligue1":     "fra.1",
+    "ucl":        "uefa.champions",
+    "mls":        "usa.1",
 }
 
 
@@ -70,9 +75,10 @@ def get_soccer_scoreboard(league_key: str, game_date: date | None = None) -> lis
 
 def get_soccer_standings(league_key: str) -> list[dict]:
     """
-    Fetch season standings and return per-team goal stats.
+    Fetch season/tournament standings and return per-team goal stats.
     Returns list of: {team_name, games_played, goals_for, goals_against}
     Used to derive attack/defense ratings for the Poisson soccer model.
+    For the World Cup this returns group-stage table data.
     """
     slug = _SOCCER_SLUGS.get(league_key, league_key)
     data = _get(f"{SITE_BASE}/sports/soccer/{slug}/standings")
@@ -101,7 +107,7 @@ def get_soccer_standings(league_key: str) -> list[dict]:
                     "goals_against": ga,
                 })
 
-    # ESPN nests some tables under "children" (e.g. MLS conferences)
+    # ESPN nests some tables under "children" (e.g. World Cup groups, MLS conferences)
     children = data.get("children", [])
     if children:
         for child in children:

@@ -3,8 +3,8 @@ Main entry point — orchestrates ingestion → simulation → edge → alerts.
 
 Usage:
   python main.py                         # today's MLB card
-  python main.py --sport soccer          # soccer only
-  python main.py --sport all             # MLB + soccer
+  python main.py --sport soccer          # World Cup only
+  python main.py --sport all             # MLB + World Cup
   python main.py --date 2026-07-04       # specific date
   python main.py --sims 5000             # faster (less accurate)
   python main.py --individual            # one Telegram message per bet
@@ -167,38 +167,43 @@ def run_mlb(game_date: date | None = None,
 
 
 def run_soccer(game_date: date | None = None) -> list[BetAlert]:
-    """Soccer pipeline: ESPN standings → Poisson model → Odds API edge detection."""
+    """Soccer pipeline: ESPN standings → Poisson model → Odds API edge detection.
+
+    During the 2026 FIFA World Cup (June–July 2026) this scans only World Cup
+    fixtures. Group-stage standings from ESPN are used to calibrate team
+    attack/defense ratings.
+    """
     import difflib
     from ingestion.espn import get_soccer_standings
     from models.soccer_model import build_score_matrix, matrix_to_markets
     from edge.edge import find_soccer_edges
 
-    logger.info("=== Soccer pipeline: {} ===", game_date or date.today())
+    logger.info("=== Soccer pipeline (World Cup): {} ===", game_date or date.today())
 
-    LEAGUES = ["epl", "la_liga", "bundesliga", "serie_a", "ligue1", "mls"]
-    HOME_ADV = 1.15   # home team expected-goals multiplier
+    LEAGUES = ["world_cup"]
+    HOME_ADV = 1.0   # no home advantage at a neutral-site tournament
 
     all_alerts: list[BetAlert] = []
 
     for league in LEAGUES:
-        # h2h = 1 credit, totals = 1 credit per league call
+        # h2h = 1 credit, totals = 1 credit
         odds_events = get_odds(league, markets="h2h,totals")
         if not odds_events:
-            logger.debug("No {} odds events today.", league)
+            logger.info("No {} odds events today.", league.upper())
             continue
         logger.info("{}: {} fixture(s) with odds", league.upper(), len(odds_events))
 
-        # Team attack/defense ratings from current standings.
-        # Skip league entirely if standings unavailable (off-season) —
-        # neutral ratings produce systematically biased Under predictions.
+        # Group-stage standings calibrate team strength.
+        # Skip if no standings yet (e.g. tournament hasn't started).
         standings = get_soccer_standings(league)
         if not standings:
-            logger.warning("{}: no standings data (likely off-season); skipping.", league.upper())
+            logger.warning("{}: no standings data yet; skipping.", league.upper())
             continue
 
         total_gp = sum(s["games_played"] for s in standings)
         total_gf = sum(s["goals_for"]    for s in standings)
         league_avg = (total_gf / total_gp) if total_gp > 0 else 1.35
+        logger.info("World Cup league avg goals/game: {:.3f}", league_avg)
 
         attack:  dict[str, float] = {}
         defense: dict[str, float] = {}
@@ -248,7 +253,7 @@ def run_soccer(game_date: date | None = None) -> list[BetAlert]:
             all_alerts.extend(alerts)
             league_alerts += len(alerts)
 
-        logger.info("{}: {} edge(s) found", league.upper(), league_alerts)
+        logger.info("WORLD_CUP: {} edge(s) found", league_alerts)
 
     return all_alerts
 

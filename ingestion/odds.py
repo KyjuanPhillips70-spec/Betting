@@ -16,6 +16,7 @@ _SESSION = requests.Session()
 
 SPORT_KEYS: dict[str, str] = {
     "mlb":        "baseball_mlb",
+    "world_cup":  "soccer_fifa_world_cup",
     "epl":        "soccer_epl",
     "ucl":        "soccer_uefa_champs_league",
     "la_liga":    "soccer_spain_la_liga",
