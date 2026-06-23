@@ -13,6 +13,7 @@ Usage:
 """
 from __future__ import annotations
 import os
+import difflib
 import argparse
 from datetime import date, datetime
 from loguru import logger
@@ -56,13 +57,29 @@ def run_mlb(game_date: date | None = None,
     for ev in odds_events:
         odds_by_id[ev.get("id", "")] = parse_odds_to_snapshots([ev], "MLB")
 
-    # Build a team-name -> odds_event_id lookup for fuzzy matching
+    # Build team-name → event-id lookup (Odds API uses full names e.g. "Houston Astros")
     team_to_event: dict[str, str] = {}
     for ev in odds_events:
         for side in ("home_team", "away_team"):
             name = ev.get(side, "").lower()
             if name:
                 team_to_event[name] = ev.get("id", "")
+
+    odds_team_names = list(team_to_event.keys())
+
+    def _match_mlb_team(short_name: str) -> str | None:
+        """Match MLB Stats API short name (e.g. 'Giants') to an Odds API event ID."""
+        n = short_name.lower()
+        # 1. Exact match
+        if n in team_to_event:
+            return team_to_event[n]
+        # 2. Substring: 'giants' in 'san francisco giants'
+        for full, eid in team_to_event.items():
+            if n in full:
+                return eid
+        # 3. Fuzzy match as last resort
+        hits = difflib.get_close_matches(n, odds_team_names, n=1, cutoff=0.6)
+        return team_to_event[hits[0]] if hits else None
 
     all_alerts: list[BetAlert] = []
 
@@ -122,9 +139,9 @@ def run_mlb(game_date: date | None = None,
             logger.error("Sim failed for {}: {}", game["game_pk"], e)
             continue
 
-        # Match odds to this game by team name
-        eid = (team_to_event.get(game["home_team"].lower()) or
-               team_to_event.get(game["away_team"].lower()))
+        # Match odds to this game by team name (short MLB name → full Odds API name)
+        eid = (_match_mlb_team(game["home_team"]) or
+               _match_mlb_team(game["away_team"]))
         game_odds = odds_by_id.get(eid, [])
         if not game_odds:
             logger.warning("No odds for {} @ {}", game["away_team"], game["home_team"])
