@@ -57,8 +57,9 @@ def find_mlb_edges(game: dict, sim: dict, snapshots: list[dict]) -> list[BetAler
     event = f"{game.get('away_team','?')} @ {game.get('home_team','?')}"
 
     h2h = [s for s in snapshots if s.get("market") == "h2h"]
-    best_home = _best_by_outcome(h2h, "home")
-    best_away = _best_by_outcome(h2h, "away")
+    # Use actual team names: The Odds API outcome names are team names, not "home"/"away"
+    best_home = _best_by_outcome(h2h, game.get("home_team", "home"))
+    best_away = _best_by_outcome(h2h, game.get("away_team", "away"))
 
     if best_home and best_away:
         fair_h, fair_a = devig_two_way(best_home["price"], best_away["price"])
@@ -122,9 +123,10 @@ def find_soccer_edges(fixture: dict, model: dict, snapshots: list[dict]) -> list
     event = f"{fixture.get('home_team','?')} vs {fixture.get('away_team','?')}"
 
     h2h = [s for s in snapshots if s.get("market") == "h2h"]
-    bh = _best_by_outcome(h2h, "home")
+    # Use actual team names: The Odds API outcome names are team names and "Draw", not "home"/"away"
+    bh = _best_by_outcome(h2h, fixture.get("home_team", "home"))
     bd = _best_by_outcome(h2h, "draw")
-    ba = _best_by_outcome(h2h, "away")
+    ba = _best_by_outcome(h2h, fixture.get("away_team", "away"))
 
     if bh and bd and ba:
         fair_h, fair_d, fair_a = devig_multi_way([bh["price"], bd["price"], ba["price"]])
