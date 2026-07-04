@@ -1,5 +1,5 @@
 """
-ESPN hidden JSON API — injuries, scoreboard, and game summaries.
+ESPN hidden JSON API — injuries, scoreboard, standings, and game summaries.
 No API key required. Endpoints documented via community reverse-engineering.
 """
 from __future__ import annotations
@@ -73,6 +73,55 @@ def get_soccer_scoreboard(league_key: str, game_date: date | None = None) -> lis
     return data.get("events", [])
 
 
+def get_wc_results() -> list[dict]:
+    """
+    Fetch every completed 2026 FIFA World Cup match by scanning each calendar
+    day from the tournament opener (2026-06-11) through today.
+
+    Returns list of {home_team, away_team, home_goals, away_goals}.
+    Used by run_soccer() to derive live attack/defense ratings, Bayesian-
+    blended with pre-tournament priors.
+    """
+    from datetime import timedelta
+    WC_START = date(2026, 6, 11)
+    slug = _SOCCER_SLUGS["world_cup"]
+    results: list[dict] = []
+    current = WC_START
+    today = date.today()
+    while current <= today:
+        data = _get(f"{SITE_BASE}/sports/soccer/{slug}/scoreboard",
+                    {"dates": current.strftime("%Y%m%d")})
+        for event in data.get("events", []):
+            if not event.get("status", {}).get("type", {}).get("completed", False):
+                continue
+            comp = (event.get("competitions") or [{}])[0]
+            competitors = comp.get("competitors", [])
+            if len(competitors) < 2:
+                continue
+            home_c = next((c for c in competitors if c.get("homeAway") == "home"),
+                          competitors[0])
+            away_c = next((c for c in competitors if c.get("homeAway") == "away"),
+                          competitors[1])
+            try:
+                h_goals = int(home_c.get("score", 0) or 0)
+                a_goals = int(away_c.get("score", 0) or 0)
+            except (ValueError, TypeError):
+                continue
+            h_name = home_c.get("team", {}).get("displayName", "")
+            a_name = away_c.get("team", {}).get("displayName", "")
+            if h_name and a_name:
+                results.append({
+                    "home_team":  h_name,
+                    "away_team":  a_name,
+                    "home_goals": h_goals,
+                    "away_goals": a_goals,
+                })
+        current += timedelta(days=1)
+        time.sleep(0.1)
+    logger.info("WC: {} completed matches fetched", len(results))
+    return results
+
+
 def get_soccer_standings(league_key: str) -> list[dict]:
     """
     Fetch season/tournament standings and return per-team goal stats.
@@ -107,7 +156,6 @@ def get_soccer_standings(league_key: str) -> list[dict]:
                     "goals_against": ga,
                 })
 
-    # ESPN nests some tables under "children" (e.g. World Cup groups, MLS conferences)
     children = data.get("children", [])
     if children:
         for child in children:

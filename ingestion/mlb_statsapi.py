@@ -86,6 +86,14 @@ def get_roster(team_id: int, season: int = CURRENT_SEASON) -> list[dict]:
     return data.get("roster", [])
 
 
+def get_team_batting_stats(team_id: int, season: int = CURRENT_SEASON) -> dict:
+    """Season aggregate team batting stats — used to build realistic lineup profiles."""
+    data = _get(f"/v1/teams/{team_id}/stats",
+                {"stats": "season", "group": "hitting", "season": season})
+    splits = data.get("stats", [{}])[0].get("splits", [{}])
+    return splits[0].get("stat", {}) if splits else {}
+
+
 def get_live_feed(game_pk: str) -> dict:
     """GUMBO live game feed — full game state including in-game weather."""
     return _get(f"/v1.1/game/{game_pk}/feed/live")
@@ -98,7 +106,7 @@ def get_boxscore(game_pk: str) -> dict:
 def assemble_pregame_bundle(game_date: date | None = None) -> list[dict]:
     """
     Full pre-game data bundle for every game on a date:
-    schedule + probable pitcher stats + splits.
+    schedule + probable pitcher stats/splits + team season batting stats.
     """
     games = get_schedule(game_date)
     logger.info("Found {} MLB games for {}", len(games), game_date or date.today())
@@ -109,6 +117,11 @@ def assemble_pregame_bundle(game_date: date | None = None) -> list[dict]:
             if pid:
                 game[f"{side}_pitcher_stats"] = get_player_stats(pid, "pitching")
                 game[f"{side}_pitcher_splits"] = get_player_splits(pid, "pitching")
-                time.sleep(0.15)  # be polite to the free API
+                time.sleep(0.15)
+            # Real team batting stats for simulation (replaces dummy league-average lineup)
+            tid = game.get(f"{side}_team_id")
+            if tid:
+                game[f"{side}_team_batting"] = get_team_batting_stats(tid)
+                time.sleep(0.10)
 
     return games

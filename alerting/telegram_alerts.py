@@ -20,6 +20,7 @@ Usage from the edge layer:
 
     alerter = TelegramAlerter()  # reads token/chat_id from env
     alerter.send_batch(bets)               # one message per bet
+    alerter.send_game_cards(bets)          # one message per game/event
     alerter.send_consolidated_card(bets)   # single message for the whole slate
 """
 
@@ -30,7 +31,7 @@ import html
 import time
 import logging
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, Iterable
 
 import requests
@@ -39,43 +40,40 @@ from requests.adapters import HTTPAdapter
 try:
     from urllib3.util.retry import Retry
     _HAS_RETRY = True
-except ImportError:  # very old urllib3
+except ImportError:
     _HAS_RETRY = False
 
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
-    pass  # dotenv is optional; env vars can be set however you like
+    pass
 
 
 logger = logging.getLogger("telegram_alerts")
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
 
-# Telegram allows ~30 messages/sec and is stricter per-chat. A small pause
-# between sends keeps you comfortably under the per-chat flood cap.
-_MIN_SEND_INTERVAL = 0.05  # seconds between consecutive sends
-# Telegram hard limit on a single message body.
-_MAX_MESSAGE_LEN = 4096
+_MIN_SEND_INTERVAL = 0.05
+_MAX_MESSAGE_LEN   = 4096
 
 
 def _esc(text: object) -> str:
-    """Escape user/data-supplied text so it can't break HTML parse_mode."""
     return html.escape(str(text), quote=False)
 
 
 @dataclass
 class BetAlert:
     """One recommended bet, ready to be formatted for Telegram."""
-    sport: str            # "MLB" or "Soccer"
-    event: str            # "Yankees @ Red Sox"
-    market: str           # "Aaron Judge 2+ Total Bases" / "Over 8.5"
-    book: str             # "FanDuel", "Hard Rock Bet", "PrizePicks"
-    line: str             # American odds "+105" or PrizePicks line "o1.5"
-    model_prob: float     # your model's probability, e.g. 0.581
-    fair_prob: float      # market no-vig probability, e.g. 0.519
-    stake_units: float    # fractional-Kelly stake in units
+    sport:          str    # "MLB" or "Soccer"
+    event:          str    # "Yankees @ Red Sox"
+    market:         str    # "Over 8.5" / "Colombia ML"
+    book:           str    # "FanDuel"
+    line:           str    # "+105"
+    model_prob:     float  # blended model probability
+    fair_prob:      float  # market no-vig probability
+    stake_units:    float  # fractional-Kelly stake in units
+    projected_score: str = field(default="")  # "Proj: USA 1.18 – Morocco 1.05 goals"
 
     @property
     def edge(self) -> float:
@@ -83,7 +81,6 @@ class BetAlert:
 
     @property
     def dedup_key(self) -> str:
-        """Stable identity for a bet, so the same one isn't sent twice."""
         return f"{self.sport}|{self.event}|{self.market}|{self.book}|{self.line}"
 
 
@@ -107,12 +104,11 @@ class TelegramAlerter:
                 "or pass token=..."
             )
 
-        # One pooled session reused for every request (TCP/TLS handshake once).
         self._session = requests.Session()
         if _HAS_RETRY:
             retry = Retry(
                 total=self.max_retries,
-                backoff_factor=0.5,                 # 0.5s, 1s, 2s ...
+                backoff_factor=0.5,
                 status_forcelist=(500, 502, 503, 504),
                 allowed_methods=frozenset(["GET", "POST"]),
                 respect_retry_after_header=True,
@@ -122,7 +118,7 @@ class TelegramAlerter:
             self._session.mount("https://", adapter)
 
         self._last_send_ts = 0.0
-        self._sent_keys: set[str] = set()  # in-run dedup
+        self._sent_keys: set[str] = set()
 
     # ---- internal pacing ------------------------------------------------
     def _pace(self) -> None:
@@ -133,16 +129,11 @@ class TelegramAlerter:
 
     # ---- low-level send -------------------------------------------------
     def send_message(self, text: str, parse_mode: str = "HTML") -> bool:
-        """Send a raw message. Returns True on success. Never raises on a
-        network hiccup so it can't crash your main loop. Honors Telegram's
-        429 retry_after, and auto-splits over-length messages."""
         if not self.chat_id:
             raise ValueError(
                 "No chat_id. Set TELEGRAM_CHAT_ID in your .env or pass "
                 "chat_id=... (run with --get-chat-id to find it)."
             )
-
-        # Split messages that exceed Telegram's 4096-char limit.
         if len(text) > _MAX_MESSAGE_LEN:
             ok = True
             for chunk in _split_text(text, _MAX_MESSAGE_LEN):
@@ -162,19 +153,16 @@ class TelegramAlerter:
             try:
                 r = self._session.post(url, json=payload, timeout=self.timeout)
             except requests.RequestException as e:
-                logger.warning("telegram network error (attempt %d): %s",
-                               attempt + 1, e)
+                logger.warning("telegram network error (attempt %d): %s", attempt + 1, e)
                 time.sleep(0.5 * (2 ** attempt))
                 continue
 
             if r.status_code == 200 and r.json().get("ok"):
                 return True
 
-            # 429: respect Telegram's requested cooldown, then retry.
             if r.status_code == 429:
                 try:
-                    retry_after = r.json().get(
-                        "parameters", {}).get("retry_after", 1)
+                    retry_after = r.json().get("parameters", {}).get("retry_after", 1)
                 except ValueError:
                     retry_after = 1
                 logger.warning("telegram 429; sleeping %ss", retry_after)
@@ -191,20 +179,50 @@ class TelegramAlerter:
     def _format_bet(self, bet: BetAlert) -> str:
         edge_pct = bet.edge * 100
         emoji = "\U0001F7E2" if bet.edge >= self.min_edge_for_green else "\U0001F7E1"
-        bar = "━" * 15
-        return (
-            f"{emoji} <b>+EV BET — {_esc(bet.sport)}</b>\n"
-            f"<b>{_esc(bet.event)}</b>\n"
-            f"{bar}\n"
-            f"\U0001F4CA <b>Market:</b> {_esc(bet.market)}\n"
-            f"\U0001F3E6 <b>Book:</b> {_esc(bet.book)}  ({_esc(bet.line)})\n"
-            f"\U0001F916 <b>Model:</b> {bet.model_prob*100:.1f}%\n"
-            f"⚖️ <b>Fair (no-vig):</b> {bet.fair_prob*100:.1f}%\n"
-            f"\U0001F4C8 <b>Edge:</b> +{edge_pct:.1f}%\n"
-            f"\U0001F4B0 <b>Stake:</b> {bet.stake_units:.2f} units\n"
-            f"{bar}\n"
-            f"<i>Review and place manually.</i>"
-        )
+        bar = "━" * 20
+        lines = [
+            f"{emoji} <b>+EV BET — {_esc(bet.sport)}</b>",
+            f"<b>{_esc(bet.event)}</b>",
+            bar,
+        ]
+        if bet.projected_score:
+            lines.append(f"\U0001F4CA <i>{_esc(bet.projected_score)}</i>")
+        lines += [
+            f"\U0001F4CA <b>Market:</b> {_esc(bet.market)}",
+            f"\U0001F3E6 <b>Book:</b> {_esc(bet.book)}  ({_esc(bet.line)})",
+            f"\U0001F916 <b>Model:</b> {bet.model_prob*100:.1f}%",
+            f"⚖️ <b>Fair (no-vig):</b> {bet.fair_prob*100:.1f}%",
+            f"\U0001F4C8 <b>Edge:</b> +{edge_pct:.1f}%",
+            f"\U0001F4B0 <b>Stake:</b> {bet.stake_units:.2f} units",
+            bar,
+            "<i>Review and place manually.</i>",
+        ]
+        return "\n".join(lines)
+
+    def _format_game_card(self, bets: list[BetAlert]) -> str:
+        """One card for a single event: header, projected score, then all picks."""
+        b0 = bets[0]
+        sport_emoji = "⚾" if b0.sport == "MLB" else "⚽"
+        bar = "━" * 22
+        lines = [
+            f"{sport_emoji} <b>{_esc(b0.event)}</b>",
+            bar,
+        ]
+        if b0.projected_score:
+            lines.append(f"\U0001F4CA <i>{_esc(b0.projected_score)}</i>")
+            lines.append("")
+        for bet in bets:
+            emoji = "\U0001F7E2" if bet.edge >= self.min_edge_for_green else "\U0001F7E1"
+            lines.append(
+                f"{emoji} <b>{_esc(bet.market)}</b>\n"
+                f"   \U0001F3E6 {_esc(bet.book)}  <b>{_esc(bet.line)}</b>\n"
+                f"   Model <b>{bet.model_prob*100:.1f}%</b> | "
+                f"Fair {bet.fair_prob*100:.1f}% | "
+                f"Edge <b>+{bet.edge*100:.1f}%</b> | {bet.stake_units:.2f}u"
+            )
+        lines.append("")
+        lines.append("<i>Review and place manually.</i>")
+        return "\n".join(lines)
 
     # ---- public send methods -------------------------------------------
     def send_bet_alert(self, bet: BetAlert, dedup: bool = True) -> bool:
@@ -217,7 +235,7 @@ class TelegramAlerter:
         return ok
 
     def send_batch(self, bets: Iterable[BetAlert], dedup: bool = True) -> int:
-        """One message per bet, highest edge first. Returns count sent."""
+        """One message per bet, highest edge first."""
         bets = list(bets)
         if not bets:
             self.send_message("No +EV bets cleared the threshold today.")
@@ -228,9 +246,29 @@ class TelegramAlerter:
                 sent += 1
         return sent
 
+    def send_game_cards(self, bets: Iterable[BetAlert]) -> int:
+        """
+        Send one Telegram card per game/event (user-requested format).
+        Within each card, picks are sorted best-edge first.
+        Returns the number of cards sent.
+        """
+        bets = list(bets)
+        if not bets:
+            self.send_message("No +EV bets cleared the threshold today.")
+            return 0
+        by_event: dict[str, list[BetAlert]] = {}
+        for bet in bets:
+            by_event.setdefault(bet.event, []).append(bet)
+        sent = 0
+        for event_bets in by_event.values():
+            event_bets.sort(key=lambda b: b.edge, reverse=True)
+            if self.send_message(self._format_game_card(event_bets)):
+                sent += 1
+        logger.info("Sent %d game card(s) to Telegram.", sent)
+        return sent
+
     def send_consolidated_card(self, bets: Iterable[BetAlert]) -> bool:
-        """Single message for the whole slate. Fewer messages = less chance
-        of hitting flood limits on big nights. Auto-splits if over 4096 chars."""
+        """Single message for the whole slate (legacy; prefer send_game_cards)."""
         bets = sorted(list(bets), key=lambda b: b.edge, reverse=True)
         if not bets:
             return self.send_message("No +EV bets cleared the threshold today.")
@@ -247,10 +285,8 @@ class TelegramAlerter:
         return self.send_message(header + "\n".join(lines) + footer)
 
     def reset_dedup(self) -> None:
-        """Clear the in-run dedup set (call at the start of each scheduled run)."""
         self._sent_keys.clear()
 
-    # ---- helper to discover your chat id -------------------------------
     def get_chat_id(self) -> None:
         url = TELEGRAM_API.format(token=self.token, method="getUpdates")
         try:
@@ -279,7 +315,6 @@ class TelegramAlerter:
 
 
 def _split_text(text: str, limit: int) -> list:
-    """Split a long message on line boundaries, staying under `limit`."""
     chunks, current = [], ""
     for line in text.split("\n"):
         if len(current) + len(line) + 1 > limit:
@@ -297,21 +332,20 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(message)s")
     parser = argparse.ArgumentParser(description="Telegram alert utility")
-    parser.add_argument("--get-chat-id", action="store_true",
-                        help="Discover your chat ID (message your bot first).")
-    parser.add_argument("--test", action="store_true",
-                        help="Send a sample bet alert to verify the setup.")
-    parser.add_argument("--test-card", action="store_true",
-                        help="Send a sample consolidated multi-bet card.")
+    parser.add_argument("--get-chat-id", action="store_true")
+    parser.add_argument("--test", action="store_true")
+    parser.add_argument("--test-card", action="store_true")
     args = parser.parse_args()
 
     alerter = TelegramAlerter()
 
     sample = [
         BetAlert("MLB", "Yankees @ Red Sox", "Aaron Judge 2+ Total Bases",
-                 "FanDuel", "+105", 0.581, 0.519, 1.4),
-        BetAlert("Soccer", "Arsenal vs Chelsea", "Over 2.5 Goals",
-                 "Hard Rock Bet", "-120", 0.560, 0.531, 0.8),
+                 "FanDuel", "+105", 0.581, 0.519, 1.4,
+                 "Proj: Yankees 5.1 @ Red Sox 4.3 (9.4 total)"),
+        BetAlert("Soccer", "Argentina vs France", "Over 2.5 Goals",
+                 "Hard Rock Bet", "-120", 0.560, 0.531, 0.8,
+                 "Proj: Argentina 1.52 – France 1.41 goals"),
     ]
 
     if args.get_chat_id:
@@ -320,7 +354,7 @@ if __name__ == "__main__":
         ok = alerter.send_bet_alert(sample[0])
         print("Sent!" if ok else "Failed - check token/chat_id.")
     elif args.test_card:
-        ok = alerter.send_consolidated_card(sample)
+        ok = alerter.send_game_cards(sample) > 0
         print("Sent!" if ok else "Failed - check token/chat_id.")
     else:
         parser.print_help()

@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import difflib
 import argparse
+from collections import defaultdict
 from datetime import date, datetime
 from loguru import logger
 
@@ -35,14 +36,16 @@ from edge.edge import find_mlb_edges
 from alerting.telegram_alerts import TelegramAlerter, BetAlert
 
 
+_INTL_AVG = 1.35   # international goals per game per team (neutral-site)
+
+
 # ---------------------------------------------------------------------------
 # Pre-tournament 2026 FIFA World Cup team ratings
-# attack / defense are multipliers relative to an international league average
-# of 1.35 goals per game per team.  Values derived from pre-tournament Elo.
-# Used as fallback when ESPN group-stage standings aren’t yet populated.
+# attack / defense are multipliers relative to _INTL_AVG.
+# Values derived from pre-tournament Elo; used as Bayesian prior when
+# actual match data is sparse (< 8 games played).
 # ---------------------------------------------------------------------------
 _WC_RATINGS: dict[str, dict[str, float]] = {
-    # Tier 1 — elite
     "Brazil":            {"attack": 1.55, "defense": 0.70},
     "France":            {"attack": 1.50, "defense": 0.72},
     "Argentina":         {"attack": 1.50, "defense": 0.72},
@@ -51,7 +54,6 @@ _WC_RATINGS: dict[str, dict[str, float]] = {
     "Germany":           {"attack": 1.42, "defense": 0.76},
     "England":           {"attack": 1.40, "defense": 0.75},
     "Netherlands":       {"attack": 1.38, "defense": 0.78},
-    # Tier 2 — strong
     "Belgium":           {"attack": 1.25, "defense": 0.85},
     "Italy":             {"attack": 1.22, "defense": 0.82},
     "Uruguay":           {"attack": 1.20, "defense": 0.83},
@@ -66,7 +68,6 @@ _WC_RATINGS: dict[str, dict[str, float]] = {
     "Morocco":           {"attack": 1.10, "defense": 0.88},
     "Japan":             {"attack": 1.08, "defense": 0.90},
     "Austria":           {"attack": 1.05, "defense": 0.97},
-    # Tier 3 — average
     "Turkey":            {"attack": 1.02, "defense": 1.00},
     "Norway":            {"attack": 1.02, "defense": 0.98},
     "Serbia":            {"attack": 0.98, "defense": 1.00},
@@ -83,11 +84,10 @@ _WC_RATINGS: dict[str, dict[str, float]] = {
     "Wales":             {"attack": 0.92, "defense": 1.05},
     "Peru":              {"attack": 0.92, "defense": 1.05},
     "Romania":           {"attack": 0.95, "defense": 1.05},
-    # Tier 4 — below average
     "Bolivia":           {"attack": 0.85, "defense": 1.12},
     "Nigeria":           {"attack": 0.88, "defense": 1.08},
     "Ivory Coast":       {"attack": 0.88, "defense": 1.08},
-    "Côte d'Ivoire":    {"attack": 0.88, "defense": 1.08},
+    "Côte d'Ivoire": {"attack": 0.88, "defense": 1.08},
     "Cameroon":          {"attack": 0.85, "defense": 1.10},
     "Egypt":             {"attack": 0.85, "defense": 1.10},
     "Algeria":           {"attack": 0.85, "defense": 1.10},
@@ -108,6 +108,80 @@ _WC_RATINGS: dict[str, dict[str, float]] = {
 }
 
 
+def _team_batting_to_rates(stat: dict) -> dict:
+    """
+    Convert MLB Stats API team batting stat dict to PlayerProfile rate format.
+    Falls back to league-average rates if the sample is too small (< 50 PA).
+    """
+    ab      = stat.get("atBats", 0) or 0
+    h       = stat.get("hits", 0) or 0
+    bb      = stat.get("baseOnBalls", 0) or 0
+    hbp     = stat.get("hitByPitch", 0) or 0
+    so      = stat.get("strikeOuts", 0) or 0
+    hr      = stat.get("homeRuns", 0) or 0
+    doubles = stat.get("doubles", 0) or 0
+    triples = stat.get("triples", 0) or 0
+    singles = max(h - doubles - triples - hr, 0)
+    pa = ab + bb + hbp
+    if pa < 50:
+        return LEAGUE_RATES.copy()
+    return {
+        "K_rate":   so / pa,
+        "BB_rate":  bb / pa,
+        "HBP_rate": hbp / pa,
+        "1B_rate":  singles / pa,
+        "2B_rate":  doubles / pa,
+        "3B_rate":  triples / pa,
+        "HR_rate":  hr / pa,
+        "out_rate": max(0.0, (ab - h)) / pa,
+    }
+
+
+def _ratings_from_wc_results(
+    results: list[dict], intl_avg: float
+) -> tuple[dict, dict, float]:
+    """
+    Derive attack/defense ratings from actual WC match results.
+
+    Uses Bayesian shrinkage toward pre-tournament priors: with only 3 group-
+    stage games per team, raw rates are noisy. PRIOR_GAMES = 8 means we blend
+    roughly 27% actual vs 73% prior after 3 games, rising to 43%/57% after 6.
+
+    Returns (attack, defense, league_avg).
+    """
+    PRIOR_GAMES = 8
+    scored:   dict[str, list] = defaultdict(list)
+    conceded: dict[str, list] = defaultdict(list)
+    for r in results:
+        scored[r["home_team"]].append(r["home_goals"])
+        scored[r["away_team"]].append(r["away_goals"])
+        conceded[r["home_team"]].append(r["away_goals"])
+        conceded[r["away_team"]].append(r["home_goals"])
+
+    total_goals = sum(r["home_goals"] + r["away_goals"] for r in results)
+    total_games = len(results)
+    league_avg = (total_goals / (total_games * 2)) if total_games > 0 else intl_avg
+
+    attack:  dict[str, float] = {}
+    defense: dict[str, float] = {}
+    for team in scored:
+        n = len(scored[team])
+        w = n / (n + PRIOR_GAMES)
+        raw_atk = (sum(scored[team]) / n) / league_avg
+        raw_def = (sum(conceded[team]) / n) / league_avg
+        pre = _WC_RATINGS.get(team, {"attack": 1.0, "defense": 1.0})
+        attack[team]  = w * raw_atk + (1 - w) * pre["attack"]
+        defense[team] = w * raw_def + (1 - w) * pre["defense"]
+
+    # Teams not yet seen retain pure pre-tournament ratings
+    for team, pre in _WC_RATINGS.items():
+        if team not in attack:
+            attack[team]  = pre["attack"]
+            defense[team] = pre["defense"]
+
+    return attack, defense, league_avg
+
+
 def _build_profile(pid, name: str, hand: str, stats: dict) -> PlayerProfile:
     rates = {k: v for k, v in stats.items() if k.endswith("_rate")}
     if not rates:
@@ -124,13 +198,11 @@ def run_mlb(game_date: date | None = None,
         logger.info("No MLB games today.")
         return []
 
-    # Fetch odds once for the whole slate (conserves API credits)
     odds_events = get_odds("mlb", markets="h2h,spreads,totals")
     odds_by_id: dict[str, list] = {}
     for ev in odds_events:
         odds_by_id[ev.get("id", "")] = parse_odds_to_snapshots([ev], "MLB")
 
-    # Build team-name → event-id lookup (Odds API uses full names e.g. "Houston Astros")
     team_to_event: dict[str, str] = {}
     for ev in odds_events:
         for side in ("home_team", "away_team"):
@@ -141,7 +213,6 @@ def run_mlb(game_date: date | None = None,
     odds_team_names = list(team_to_event.keys())
 
     def _match_mlb_team(short_name: str) -> str | None:
-        """Match MLB Stats API short name (e.g. 'Giants') to an Odds API event ID."""
         n = short_name.lower()
         if n in team_to_event:
             return team_to_event[n]
@@ -185,8 +256,20 @@ def run_mlb(game_date: date | None = None,
         combined = {k: park_adj.get(k, 1.0) * wa.get(k, 1.0)
                     for k in set(park_adj) | set(wa)}
 
-        home_lineup = build_dummy_lineup(9)
-        away_lineup = build_dummy_lineup(9)
+        # Build lineups from real team batting stats (falls back to league average)
+        home_rates = _team_batting_to_rates(game.get("home_team_batting", {}))
+        away_rates = _team_batting_to_rates(game.get("away_team_batting", {}))
+        home_lineup = [
+            PlayerProfile(f"home_{i}", f"{game.get('home_team','Home')} {i+1}",
+                          "R", home_rates.copy())
+            for i in range(9)
+        ]
+        away_lineup = [
+            PlayerProfile(f"away_{i}", f"{game.get('away_team','Away')} {i+1}",
+                          "R", away_rates.copy())
+            for i in range(9)
+        ]
+
         home_pitcher = _build_profile(
             game.get("home_pitcher_id"), game.get("home_pitcher"),
             "R", game.get("home_pitcher_stats", {})
@@ -214,6 +297,16 @@ def run_mlb(game_date: date | None = None,
             continue
 
         alerts = find_mlb_edges(game, sim, game_odds)
+
+        # Tag each pick with the projected score from the simulation
+        proj = (
+            f"Proj: {game.get('away_team','?')} {sim['mean_away_runs']:.1f}"
+            f" @ {game.get('home_team','?')} {sim['mean_home_runs']:.1f}"
+            f"  ({sim['mean_total']:.1f} total runs)"
+        )
+        for alert in alerts:
+            alert.projected_score = proj
+
         for alert in alerts:
             insert_bet_log({
                 "sport":      alert.sport,
@@ -233,22 +326,23 @@ def run_mlb(game_date: date | None = None,
 
 
 def run_soccer(game_date: date | None = None) -> list[BetAlert]:
-    """Soccer pipeline: ESPN standings → Poisson model → Odds API edge detection.
-
-    During the 2026 FIFA World Cup (June–July 2026) this scans only World Cup
-    fixtures.  When ESPN group-stage standings aren’t available yet, falls back
-    to pre-tournament Elo-based ratings stored in _WC_RATINGS.
     """
-    import difflib
-    from ingestion.espn import get_soccer_standings
+    Soccer pipeline for the 2026 FIFA World Cup.
+
+    Rating priority:
+      1. ESPN group-stage standings (if populated)
+      2. Actual WC match results scraped from ESPN scoreboard, Bayesian-blended
+         with pre-tournament Elo priors
+      3. Pure pre-tournament Elo priors (fallback when < 4 results found)
+    """
+    from ingestion.espn import get_soccer_standings, get_wc_results
     from models.soccer_model import build_score_matrix, matrix_to_markets
     from edge.edge import find_soccer_edges
 
     logger.info("=== Soccer pipeline (World Cup): {} ===", game_date or date.today())
 
-    LEAGUES    = ["world_cup"]
-    HOME_ADV   = 1.0    # neutral-site tournament
-    INTL_AVG   = 1.35   # international goals per game per team
+    LEAGUES  = ["world_cup"]
+    HOME_ADV = 1.0    # neutral-site tournament
 
     all_alerts: list[BetAlert] = []
 
@@ -259,27 +353,42 @@ def run_soccer(game_date: date | None = None) -> list[BetAlert]:
             continue
         logger.info("{}: {} fixture(s) with odds", league.upper(), len(odds_events))
 
-        # Try ESPN group-stage standings first; fall back to pre-tournament ratings.
+        # --- Rating selection: standings > live results > pre-tournament prior ---
         standings = get_soccer_standings(league)
-        if standings:
+        if standings and sum(s["games_played"] for s in standings) > 0:
             total_gp   = sum(s["games_played"] for s in standings)
             total_gf   = sum(s["goals_for"]    for s in standings)
-            league_avg = (total_gf / total_gp) if total_gp > 0 else INTL_AVG
+            league_avg = (total_gf / total_gp) if total_gp > 0 else _INTL_AVG
             attack:  dict[str, float] = {}
             defense: dict[str, float] = {}
             for row in standings:
                 gp = row["games_played"]
                 attack[row["team_name"]]  = (row["goals_for"]     / gp) / league_avg
                 defense[row["team_name"]] = (row["goals_against"] / gp) / league_avg
-            logger.info("WORLD_CUP: using ESPN standings ({} teams, avg={:.3f})",
+            logger.info("WORLD_CUP: ESPN standings ({} teams, avg={:.3f})",
                         len(standings), league_avg)
-        elif league == "world_cup" and _WC_RATINGS:
-            league_avg = INTL_AVG
-            attack  = {k: v["attack"]  for k, v in _WC_RATINGS.items()}
-            defense = {k: v["defense"] for k, v in _WC_RATINGS.items()}
-            logger.info("WORLD_CUP: ESPN standings unavailable; using pre-tournament ratings")
+
+        elif league == "world_cup":
+            # Try live WC results from ESPN scoreboard
+            wc_results = get_wc_results()
+            if len(wc_results) >= 4:
+                attack, defense, league_avg = _ratings_from_wc_results(
+                    wc_results, _INTL_AVG
+                )
+                logger.info(
+                    "WORLD_CUP: {} completed matches → live-blended ratings",
+                    len(wc_results)
+                )
+            else:
+                league_avg = _INTL_AVG
+                attack  = {k: v["attack"]  for k, v in _WC_RATINGS.items()}
+                defense = {k: v["defense"] for k, v in _WC_RATINGS.items()}
+                logger.info(
+                    "WORLD_CUP: {} results fetched (< 4); using pre-tournament ratings",
+                    len(wc_results)
+                )
         else:
-            logger.warning("{}: no standings data; skipping.", league.upper())
+            logger.warning("{}: no ratings data; skipping.", league.upper())
             continue
 
         espn_names = list(attack.keys())
@@ -306,6 +415,12 @@ def run_soccer(game_date: date | None = None) -> list[BetAlert]:
             snapshots = parse_odds_to_snapshots([event], "Soccer")
             fixture   = {"home_team": home_raw, "away_team": away_raw}
             alerts    = find_soccer_edges(fixture, model_probs, snapshots)
+
+            # Tag each pick with the projected scoreline from the Poisson model
+            proj = f"Proj: {home_raw} {lam_h:.2f} – {away_raw} {lam_a:.2f} goals"
+            for alert in alerts:
+                alert.projected_score = proj
+
             for alert in alerts:
                 insert_bet_log({
                     "sport":       alert.sport,
@@ -329,9 +444,8 @@ def run_soccer(game_date: date | None = None) -> list[BetAlert]:
 
 def run_daily_card(game_date: date | None = None,
                    sport: str = "mlb",
-                   consolidated: bool = True,
                    n_sims: int = 10_000) -> None:
-    """Orchestrate the full daily pipeline and send Telegram alerts."""
+    """Orchestrate the full daily pipeline and send per-game Telegram cards."""
     try:
         alerter = TelegramAlerter()
         alerter.reset_dedup()
@@ -353,12 +467,9 @@ def run_daily_card(game_date: date | None = None,
             alerter.send_message("No +EV bets cleared the threshold today.")
         return
 
-    logger.info("Found {} +EV bet(s). Sending alerts.", len(all_alerts))
+    logger.info("Found {} +EV bet(s). Sending per-game cards.", len(all_alerts))
     if alerter:
-        if consolidated:
-            alerter.send_consolidated_card(all_alerts)
-        else:
-            alerter.send_batch(all_alerts)
+        alerter.send_game_cards(all_alerts)
 
 
 def main() -> None:
@@ -367,7 +478,7 @@ def main() -> None:
     parser.add_argument("--date",    help="YYYY-MM-DD (default: today)")
     parser.add_argument("--sims",    type=int, default=10_000)
     parser.add_argument("--individual", action="store_true",
-                        help="Send one Telegram message per bet instead of a card")
+                        help="Send one Telegram message per bet instead of per game")
     parser.add_argument("--init-db", action="store_true",
                         help="Initialize / migrate the database and exit")
     parser.add_argument("--report",  action="store_true",
@@ -387,7 +498,26 @@ def main() -> None:
         return
 
     game_date = date.fromisoformat(args.date) if args.date else None
-    run_daily_card(game_date, args.sport, not args.individual, args.sims)
+
+    if args.individual:
+        # Individual-mode: run pipelines and send one message per bet
+        try:
+            alerter = TelegramAlerter()
+            alerter.reset_dedup()
+        except ValueError as e:
+            logger.warning("Telegram not configured: {}", e)
+            alerter = None
+        alerts: list[BetAlert] = []
+        if args.sport in ("mlb", "all"):
+            alerts.extend(run_mlb(game_date, args.sims))
+        if args.sport in ("soccer", "all"):
+            alerts.extend(run_soccer(game_date))
+        if alerter and alerts:
+            alerter.send_batch(alerts)
+        elif not alerts:
+            logger.info("No +EV bets found.")
+    else:
+        run_daily_card(game_date, args.sport, args.sims)
 
 
 if __name__ == "__main__":
