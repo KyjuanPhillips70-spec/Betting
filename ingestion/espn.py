@@ -108,11 +108,7 @@ def _parse_wc_events(events: list, match_date: str) -> list[dict]:
 def get_wc_results() -> list[dict]:
     """
     Fetch every completed 2026 FIFA World Cup match, with DB caching.
-
-    Past dates (before today) are fetched once and stored in wc_results_cache.
-    Today is always re-fetched so in-progress games that finish are captured.
-    This eliminates 23+ redundant ESPN API calls on every bot run.
-
+    Past dates are fetched once and stored; today is always re-fetched.
     Returns list of {home_team, away_team, home_goals, away_goals}.
     """
     from datetime import timedelta
@@ -125,15 +121,14 @@ def get_wc_results() -> list[dict]:
     slug     = _SOCCER_SLUGS["world_cup"]
     today    = date.today()
 
-    fetched_dates = get_wc_dates_fetched()   # ISO strings already in DB
+    fetched_dates = get_wc_dates_fetched()
     new_results: list[dict] = []
 
     current = WC_START
     while current <= today:
-        date_iso = current.isoformat()       # "2026-06-11"
-        date_fmt = current.strftime("%Y%m%d") # "20260611" for ESPN API
+        date_iso = current.isoformat()
+        date_fmt = current.strftime("%Y%m%d")
 
-        # Skip past dates already in the cache — today always re-fetches
         if current < today and date_iso in fetched_dates:
             current += timedelta(days=1)
             continue
@@ -147,7 +142,6 @@ def get_wc_results() -> list[dict]:
             save_wc_results_cache(day_results)
             new_results.extend(day_results)
 
-        # Mark past dates as fully fetched (no re-fetch needed)
         if current < today:
             save_wc_date_fetched(date_iso)
 
@@ -160,12 +154,40 @@ def get_wc_results() -> list[dict]:
     return cached
 
 
+def get_wc_scoring_leaders() -> list[dict]:
+    """
+    Fetch World Cup tournament scoring leaders.
+    Returns list of {player_name, team, goals} sorted by goals desc.
+    Used as a cross-check signal: if a team's top scorer is suspended/injured
+    the operator can see that the Poisson model may be overrating their attack.
+    Returns [] gracefully if the endpoint is unavailable.
+    """
+    slug = _SOCCER_SLUGS["world_cup"]
+    data = _get(f"{SITE_BASE}/sports/soccer/{slug}/leaders")
+    leaders: list[dict] = []
+    for category in data.get("categories", []):
+        cat_name = category.get("name", "").lower()
+        if cat_name not in ("goals", "scoring", "goalscoring"):
+            continue
+        for leader_group in category.get("leaders", []):
+            for entry in leader_group.get("leaders", []):
+                athlete = entry.get("athlete", {})
+                team    = athlete.get("team", {})
+                leaders.append({
+                    "player_name": athlete.get("displayName", ""),
+                    "team":        team.get("displayName", ""),
+                    "goals":       int(entry.get("value", 0) or 0),
+                })
+        break  # only need goals category
+    leaders.sort(key=lambda x: x["goals"], reverse=True)
+    logger.info("WC scoring leaders fetched: {} players", len(leaders))
+    return leaders
+
+
 def get_soccer_standings(league_key: str) -> list[dict]:
     """
     Fetch season/tournament standings and return per-team goal stats.
     Returns list of: {team_name, games_played, goals_for, goals_against}
-    Used to derive attack/defense ratings for the Poisson soccer model.
-    For the World Cup this returns group-stage table data.
     """
     slug = _SOCCER_SLUGS.get(league_key, league_key)
     data = _get(f"{SITE_BASE}/sports/soccer/{slug}/standings")
