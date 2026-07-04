@@ -25,6 +25,13 @@ LEAGUE_RATES: dict[str, float] = {
 OUTCOMES     = ["K", "BB", "HBP", "1B", "2B", "3B", "HR", "out"]
 OUTCOME_KEYS = [f"{o}_rate" for o in OUTCOMES]
 
+# All MLB totals lines we cover: 5.5, 6.0, 6.5, ..., 15.0
+# Keys use underscore for decimal: 7.5 → "over_7_5" to match _check_totals() lookup.
+_MLB_TOTAL_LINES: list[float] = [x / 2 for x in range(11, 31)]
+
+# Probability a runner on 2nd scores on a single (league average across all speeds)
+_P_SCORE_2ND_ON_1B = 0.65
+
 
 @dataclass
 class PlayerProfile:
@@ -108,8 +115,13 @@ def _advance_bases(runners: list[int], outcome: str) -> tuple[list[int], int]:
 
     if outcome == "1B":
         r1, r2, r3 = runners
-        runs += r3
-        return [1, r1, r2], runs
+        runs += r3   # runner on 3rd always scores
+        # Runner on 2nd: scores ~65% of the time on a single (league-average)
+        if r2 and random.random() < _P_SCORE_2ND_ON_1B:
+            runs += 1
+            return [1, r1, 0], runs   # 3rd now empty; batter on 1st, r1 on 2nd
+        else:
+            return [1, r1, r2], runs  # r2 holds at 3rd; batter on 1st, r1 on 2nd
 
     if outcome == "2B":
         r1, r2, r3 = runners
@@ -158,16 +170,16 @@ def simulate_game(home_lineup: list[PlayerProfile], away_lineup: list[PlayerProf
         r, away_pos = simulate_half_inning(away_lineup, home_pitcher, away_pos,
                                             park_factors, weather_adj)
         away_runs += r
-        # Walk-off: home already winning entering bottom of 9th
+        # Home already winning entering bottom of last inning — no need to bat
         if inning == innings - 1 and home_runs > away_runs:
             break
         r, home_pos = simulate_half_inning(home_lineup, away_pitcher, home_pos,
                                             park_factors, weather_adj)
         home_runs += r
         if inning == innings - 1 and home_runs > away_runs:
-            break   # walk-off hit
+            break   # walk-off
 
-    # Extra innings (runner-on-second rule omitted for simplicity)
+    # Extra innings (simplified: no runner-on-second rule)
     extra = 0
     while home_runs == away_runs and extra < 6:
         r, away_pos = simulate_half_inning(away_lineup, home_pitcher, away_pos,
@@ -177,6 +189,14 @@ def simulate_game(home_lineup: list[PlayerProfile], away_lineup: list[PlayerProf
                                             park_factors, weather_adj)
         home_runs += r
         extra += 1
+
+    # If still tied after max extra innings, flip a coin so neither team
+    # is systematically disadvantaged in the win-probability tally.
+    if home_runs == away_runs:
+        if random.random() < 0.5:
+            home_runs += 1
+        else:
+            away_runs += 1
 
     return {
         "home_runs": home_runs,
@@ -192,6 +212,10 @@ def run_monte_carlo(home_lineup: list[PlayerProfile], away_lineup: list[PlayerPr
                     n_sims: int = 10_000) -> dict:
     """
     Run n_sims game simulations. Returns win probabilities and run distribution stats.
+
+    Totals keys follow the same format as _check_totals(): float 7.5 → "over_7_5".
+    All lines from 5.5 to 15.0 (both .5 and integer marks) are included so that
+    any total line the odds API returns can be looked up without a miss.
     """
     home_wins = 0
     totals: list[int] = []
@@ -211,18 +235,23 @@ def run_monte_carlo(home_lineup: list[PlayerProfile], away_lineup: list[PlayerPr
     h = np.array(home_runs_list)
     a = np.array(away_runs_list)
 
+    # Dynamically compute over prob for every standard MLB totals line.
+    # Covers 5.5, 6.0, 6.5, …, 15.0 so _check_totals() never gets a cache miss.
+    over_probs = {
+        f"over_{str(line).replace('.', '_')}": float((t > line).mean())
+        for line in _MLB_TOTAL_LINES
+    }
+
     return {
-        "home_win_prob":             home_wins / n_sims,
-        "away_win_prob":             1 - home_wins / n_sims,
-        "mean_total":                float(t.mean()),
-        "over_7_5":                  float((t > 7.5).mean()),
-        "over_8_5":                  float((t > 8.5).mean()),
-        "over_9_5":                  float((t > 9.5).mean()),
-        "run_line_home_minus_1_5":   float((h - a > 1.5).mean()),
-        "run_line_away_plus_1_5":    float((a - h > -1.5).mean()),
-        "mean_home_runs":            float(h.mean()),
-        "mean_away_runs":            float(a.mean()),
-        "n_sims":                    n_sims,
+        "home_win_prob":           home_wins / n_sims,
+        "away_win_prob":           1 - home_wins / n_sims,
+        "mean_total":              float(t.mean()),
+        "mean_home_runs":          float(h.mean()),
+        "mean_away_runs":          float(a.mean()),
+        "n_sims":                  n_sims,
+        "run_line_home_minus_1_5": float((h - a > 1.5).mean()),
+        "run_line_away_plus_1_5":  float((a - h > -1.5).mean()),
+        **over_probs,
     }
 
 

@@ -114,15 +114,14 @@ _WC_RATINGS: dict[str, dict[str, float]] = {
 
 # Short-name aliases that ESPN or odds APIs may return, mapped to canonical keys above
 _WC_ALIASES: dict[str, str] = {
-    "USA":              "United States",
-    "US":               "United States",
-    "Cote d'Ivoire":    "Côte d'Ivoire",
-    "Ivory Coast":      "Ivory Coast",
-    "Korea Republic":   "South Korea",
+    "USA":               "United States",
+    "US":                "United States",
+    "Cote d'Ivoire":     "Côte d'Ivoire",
+    "Korea Republic":    "South Korea",
     "Republic of Korea": "South Korea",
-    "IR Iran":          "Iran",
-    "Czechia":          "Czech Republic",
-    "Türkiye":          "Turkey",
+    "IR Iran":           "Iran",
+    "Czechia":           "Czech Republic",
+    "Türkiye":           "Turkey",
 }
 
 
@@ -152,6 +151,40 @@ def _team_batting_to_rates(stat: dict) -> dict:
         "3B_rate":  triples / pa,
         "HR_rate":  hr / pa,
         "out_rate": max(0.0, (ab - h)) / pa,
+    }
+
+
+def _pitcher_stats_to_rates(stat: dict) -> dict:
+    """
+    Convert MLB Stats API pitcher season stats to PlayerProfile rate format.
+    Falls back to league-average rates if fewer than 50 batters faced.
+
+    MLB Stats API pitching keys use raw counts (strikeOuts, battersFaced),
+    not the _rate suffix format.  This conversion is what makes each pitcher
+    actually distinct in the simulation instead of all defaulting to league avg.
+    """
+    bf      = stat.get("battersFaced", 0) or 0
+    k       = stat.get("strikeOuts", 0) or 0
+    bb      = stat.get("baseOnBalls", 0) or 0
+    # MLB Stats API uses "hitBatsmen" for pitchers, "hitByPitch" for batters
+    hbp     = stat.get("hitBatsmen", stat.get("hitByPitch", 0)) or 0
+    h       = stat.get("hits", 0) or 0
+    hr      = stat.get("homeRuns", 0) or 0
+    doubles = stat.get("doubles", 0) or 0
+    triples = stat.get("triples", 0) or 0
+    singles = max(h - doubles - triples - hr, 0)
+    if bf < 50:
+        return LEAGUE_RATES.copy()
+    in_play_outs = max(0.0, bf - k - bb - hbp - h)
+    return {
+        "K_rate":   k / bf,
+        "BB_rate":  bb / bf,
+        "HBP_rate": hbp / bf,
+        "1B_rate":  singles / bf,
+        "2B_rate":  doubles / bf,
+        "3B_rate":  triples / bf,
+        "HR_rate":  hr / bf,
+        "out_rate": in_play_outs / bf,
     }
 
 
@@ -187,7 +220,6 @@ def _ratings_from_wc_results(
         w = n / (n + PRIOR_GAMES)
         raw_atk = (sum(scored[team]) / n) / league_avg
         raw_def = (sum(conceded[team]) / n) / league_avg
-        # Resolve aliases before looking up WC prior
         canonical = _WC_ALIASES.get(team, team)
         pre = _WC_RATINGS.get(canonical, {"attack": 1.0, "defense": 1.0})
         attack[team]  = w * raw_atk + (1 - w) * pre["attack"]
@@ -203,9 +235,16 @@ def _ratings_from_wc_results(
 
 
 def _build_profile(pid, name: str, hand: str, stats: dict) -> PlayerProfile:
+    """Build a batter/hitter profile from batting-stat keys (k_rate, bb_rate, etc.)."""
     rates = {k: v for k, v in stats.items() if k.endswith("_rate")}
     if not rates:
         rates = LEAGUE_RATES.copy()
+    return PlayerProfile(str(pid or "unk"), name or "TBD", hand, rates)
+
+
+def _build_pitcher_profile(pid, name: str, hand: str, stats: dict) -> PlayerProfile:
+    """Build a pitcher profile by converting raw MLB Stats API pitching stats."""
+    rates = _pitcher_stats_to_rates(stats)
     return PlayerProfile(str(pid or "unk"), name or "TBD", hand, rates)
 
 
@@ -299,11 +338,12 @@ def run_mlb(game_date: date | None = None,
             for i in range(9)
         ]
 
-        home_pitcher = _build_profile(
+        # Build pitcher profiles from real season pitching stats
+        home_pitcher = _build_pitcher_profile(
             game.get("home_pitcher_id"), game.get("home_pitcher"),
             "R", game.get("home_pitcher_stats", {})
         )
-        away_pitcher = _build_profile(
+        away_pitcher = _build_pitcher_profile(
             game.get("away_pitcher_id"), game.get("away_pitcher"),
             "R", game.get("away_pitcher_stats", {})
         )
@@ -341,16 +381,16 @@ def run_mlb(game_date: date | None = None,
 
         for alert in alerts:
             insert_bet_log({
-                "sport":          alert.sport,
-                "event":          alert.event,
-                "market":         alert.market,
-                "book":           alert.book,
-                "line":           alert.line,
-                "model_prob":     alert.model_prob,
-                "fair_prob":      alert.fair_prob,
-                "edge":           alert.edge,
-                "stake_units":    alert.stake_units,
-                "ev":             alert.edge,
+                "sport":           alert.sport,
+                "event":           alert.event,
+                "market":          alert.market,
+                "book":            alert.book,
+                "line":            alert.line,
+                "model_prob":      alert.model_prob,
+                "fair_prob":       alert.fair_prob,
+                "edge":            alert.edge,
+                "stake_units":     alert.stake_units,
+                "ev":              alert.edge,
                 "projected_score": proj,
             })
         all_alerts.extend(alerts)
@@ -427,7 +467,6 @@ def run_soccer(game_date: date | None = None) -> list[BetAlert]:
         espn_names = list(attack.keys())
 
         def _match(name: str) -> str:
-            # Check alias table first (e.g. "USA" → "United States")
             canonical = _WC_ALIASES.get(name, name)
             if canonical in attack:
                 return canonical
