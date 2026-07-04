@@ -65,14 +65,14 @@ def _esc(text: object) -> str:
 @dataclass
 class BetAlert:
     """One recommended bet, ready to be formatted for Telegram."""
-    sport:          str    # "MLB" or "Soccer"
-    event:          str    # "Yankees @ Red Sox"
-    market:         str    # "Over 8.5" / "Colombia ML"
-    book:           str    # "FanDuel"
-    line:           str    # "+105"
-    model_prob:     float  # blended model probability
-    fair_prob:      float  # market no-vig probability
-    stake_units:    float  # fractional-Kelly stake in units
+    sport:           str    # "MLB" or "Soccer"
+    event:           str    # "Yankees @ Red Sox"
+    market:          str    # "Over 8.5" / "Colombia ML"
+    book:            str    # "FanDuel"
+    line:            str    # "+105"
+    model_prob:      float  # blended model probability
+    fair_prob:       float  # market no-vig probability
+    stake_units:     float  # fractional-Kelly stake in units
     projected_score: str = field(default="")  # "Proj: USA 1.18 – Morocco 1.05 goals"
 
     @property
@@ -119,6 +119,11 @@ class TelegramAlerter:
 
         self._last_send_ts = 0.0
         self._sent_keys: set[str] = set()
+
+    # ---- sorting --------------------------------------------------------
+    def _sort_key(self, bet: BetAlert) -> tuple:
+        """Sort key: green bets first, then by edge descending within each group."""
+        return (bet.edge >= self.min_edge_for_green, bet.edge)
 
     # ---- internal pacing ------------------------------------------------
     def _pace(self) -> None:
@@ -235,21 +240,21 @@ class TelegramAlerter:
         return ok
 
     def send_batch(self, bets: Iterable[BetAlert], dedup: bool = True) -> int:
-        """One message per bet, highest edge first."""
+        """One message per bet. 🟢 bets first, then 🟡, highest edge first within each."""
         bets = list(bets)
         if not bets:
             self.send_message("No +EV bets cleared the threshold today.")
             return 0
         sent = 0
-        for bet in sorted(bets, key=lambda b: b.edge, reverse=True):
+        for bet in sorted(bets, key=self._sort_key, reverse=True):
             if self.send_bet_alert(bet, dedup=dedup):
                 sent += 1
         return sent
 
     def send_game_cards(self, bets: Iterable[BetAlert]) -> int:
         """
-        Send one Telegram card per game/event (user-requested format).
-        Within each card, picks are sorted best-edge first.
+        Send one Telegram card per game/event.
+        Within each card: 🟢 bets first, then 🟡, highest edge first within each group.
         Returns the number of cards sent.
         """
         bets = list(bets)
@@ -261,15 +266,15 @@ class TelegramAlerter:
             by_event.setdefault(bet.event, []).append(bet)
         sent = 0
         for event_bets in by_event.values():
-            event_bets.sort(key=lambda b: b.edge, reverse=True)
+            event_bets.sort(key=self._sort_key, reverse=True)
             if self.send_message(self._format_game_card(event_bets)):
                 sent += 1
         logger.info("Sent %d game card(s) to Telegram.", sent)
         return sent
 
     def send_consolidated_card(self, bets: Iterable[BetAlert]) -> bool:
-        """Single message for the whole slate (legacy; prefer send_game_cards)."""
-        bets = sorted(list(bets), key=lambda b: b.edge, reverse=True)
+        """Single message for the whole slate. 🟢 first, then 🟡."""
+        bets = sorted(list(bets), key=self._sort_key, reverse=True)
         if not bets:
             return self.send_message("No +EV bets cleared the threshold today.")
         header = f"\U0001F4CB <b>Today's +EV Card</b>  ({len(bets)} bets)\n\n"
