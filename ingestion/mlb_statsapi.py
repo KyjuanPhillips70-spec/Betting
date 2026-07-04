@@ -30,6 +30,14 @@ def _get(path: str, params: dict | None = None, retries: int = 3) -> dict:
     return {}
 
 
+def _first_splits(data: dict, outer_key: str = "stats") -> list:
+    """Safely extract the splits list from the first stats group."""
+    groups = data.get(outer_key) or []
+    if not groups:
+        return []
+    return groups[0].get("splits") or []
+
+
 def get_schedule(game_date: date | None = None) -> list[dict]:
     """Return schedule for a date with game_pk, teams, probable pitchers, venue coords."""
     d = (game_date or date.today()).strftime("%Y-%m-%d")
@@ -67,7 +75,7 @@ def get_player_stats(person_id: int, group: str = "hitting",
     """Season aggregate stats for a player. group: 'hitting' or 'pitching'."""
     data = _get(f"/v1/people/{person_id}/stats",
                 {"stats": "season", "group": group, "season": season})
-    splits = data.get("stats", [{}])[0].get("splits", [{}])
+    splits = _first_splits(data)
     return splits[0].get("stat", {}) if splits else {}
 
 
@@ -77,7 +85,7 @@ def get_player_splits(person_id: int, group: str = "hitting",
     data = _get(f"/v1/people/{person_id}/stats",
                 {"stats": "statSplits", "group": group,
                  "season": season, "sitCodes": "vl,vr,h,a"})
-    return data.get("stats", [{}])[0].get("splits", [])
+    return _first_splits(data)
 
 
 def get_roster(team_id: int, season: int = CURRENT_SEASON) -> list[dict]:
@@ -90,7 +98,7 @@ def get_team_batting_stats(team_id: int, season: int = CURRENT_SEASON) -> dict:
     """Season aggregate team batting stats — used to build realistic lineup profiles."""
     data = _get(f"/v1/teams/{team_id}/stats",
                 {"stats": "season", "group": "hitting", "season": season})
-    splits = data.get("stats", [{}])[0].get("splits", [{}])
+    splits = _first_splits(data)
     return splits[0].get("stat", {}) if splits else {}
 
 
