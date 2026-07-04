@@ -2,6 +2,12 @@
 MLB Monte Carlo simulator.
 Simulates games plate-appearance by plate-appearance using the log5 / odds-ratio
 method to combine batter and pitcher rates, then applies park + weather factors.
+
+Pitching model:
+  Innings 1-5  → starting pitcher profile
+  Innings 6-9  → bullpen profile (team pitching aggregate)
+  Extra innings → bullpen profile
+If no bullpen profile is supplied the starter continues (backward-compatible).
 """
 from __future__ import annotations
 import math
@@ -26,10 +32,12 @@ OUTCOMES     = ["K", "BB", "HBP", "1B", "2B", "3B", "HR", "out"]
 OUTCOME_KEYS = [f"{o}_rate" for o in OUTCOMES]
 
 # All MLB totals lines we cover: 5.5, 6.0, 6.5, ..., 15.0
-# Keys use underscore for decimal: 7.5 → "over_7_5" to match _check_totals() lookup.
 _MLB_TOTAL_LINES: list[float] = [x / 2 for x in range(11, 31)]
 
-# Probability a runner on 2nd scores on a single (league average across all speeds)
+# Approximate inning when a starter is replaced by the bullpen
+_STARTER_INNINGS = 5
+
+# Probability a runner on 2nd scores on a single (league average)
 _P_SCORE_2ND_ON_1B = 0.65
 
 
@@ -101,7 +109,6 @@ def _advance_bases(runners: list[int], outcome: str) -> tuple[list[int], int]:
         return runners[:], 0
 
     if outcome in ("BB", "HBP"):
-        # Force-advance only if bases are loaded in sequence
         r1, r2, r3 = runners
         if r1 and r2 and r3:
             runs = 1
@@ -115,13 +122,13 @@ def _advance_bases(runners: list[int], outcome: str) -> tuple[list[int], int]:
 
     if outcome == "1B":
         r1, r2, r3 = runners
-        runs += r3   # runner on 3rd always scores
+        runs += r3
         # Runner on 2nd: scores ~65% of the time on a single (league-average)
         if r2 and random.random() < _P_SCORE_2ND_ON_1B:
             runs += 1
-            return [1, r1, 0], runs   # 3rd now empty; batter on 1st, r1 on 2nd
+            return [1, r1, 0], runs
         else:
-            return [1, r1, r2], runs  # r2 holds at 3rd; batter on 1st, r1 on 2nd
+            return [1, r1, r2], runs
 
     if outcome == "2B":
         r1, r2, r3 = runners
@@ -147,7 +154,7 @@ def simulate_half_inning(lineup: list[PlayerProfile], pitcher: PlayerProfile,
     outs, runs, runners = 0, 0, [0, 0, 0]
     while outs < 3:
         batter = lineup[pos % len(lineup)]
-        probs  = compute_pa_probs(batter, pitcher, park_factors, weather_adj)
+        probs   = compute_pa_probs(batter, pitcher, park_factors, weather_adj)
         outcome = _sample_outcome(probs)
         if outcome in ("K", "out"):
             outs += 1
@@ -158,40 +165,55 @@ def simulate_half_inning(lineup: list[PlayerProfile], pitcher: PlayerProfile,
     return runs, pos % len(lineup)
 
 
-def simulate_game(home_lineup: list[PlayerProfile], away_lineup: list[PlayerProfile],
-                   home_pitcher: PlayerProfile, away_pitcher: PlayerProfile,
-                   park_factors: dict | None = None, weather_adj: dict | None = None,
-                   innings: int = 9) -> dict:
-    """Simulate a full game. Returns home_runs, away_runs, winner, total."""
+def simulate_game(home_lineup: list[PlayerProfile],
+                  away_lineup: list[PlayerProfile],
+                  home_pitcher: PlayerProfile,
+                  away_pitcher: PlayerProfile,
+                  park_factors: dict | None = None,
+                  weather_adj: dict | None = None,
+                  innings: int = 9,
+                  home_bullpen: PlayerProfile | None = None,
+                  away_bullpen: PlayerProfile | None = None) -> dict:
+    """
+    Simulate a full game.
+    Innings 1-_STARTER_INNINGS use the starter; remaining innings use the
+    bullpen profile (falls back to starter if none supplied).
+    """
     home_runs, away_runs = 0, 0
     home_pos, away_pos   = 0, 0
 
     for inning in range(innings):
-        r, away_pos = simulate_half_inning(away_lineup, home_pitcher, away_pos,
+        # Select pitcher based on inning
+        home_p = home_pitcher if inning < _STARTER_INNINGS else (home_bullpen or home_pitcher)
+        away_p = away_pitcher if inning < _STARTER_INNINGS else (away_bullpen or away_pitcher)
+
+        r, away_pos = simulate_half_inning(away_lineup, home_p, away_pos,
                                             park_factors, weather_adj)
         away_runs += r
-        # Home already winning entering bottom of last inning — no need to bat
+        # Home already winning entering bottom of last inning — skip at-bat
         if inning == innings - 1 and home_runs > away_runs:
             break
-        r, home_pos = simulate_half_inning(home_lineup, away_pitcher, home_pos,
+        r, home_pos = simulate_half_inning(home_lineup, away_p, home_pos,
                                             park_factors, weather_adj)
         home_runs += r
         if inning == innings - 1 and home_runs > away_runs:
             break   # walk-off
 
-    # Extra innings (simplified: no runner-on-second rule)
+    # Extra innings: always use bullpen
+    home_xp = home_bullpen or home_pitcher
+    away_xp = away_bullpen or away_pitcher
     extra = 0
     while home_runs == away_runs and extra < 6:
-        r, away_pos = simulate_half_inning(away_lineup, home_pitcher, away_pos,
+        r, away_pos = simulate_half_inning(away_lineup, home_xp, away_pos,
                                             park_factors, weather_adj)
         away_runs += r
-        r, home_pos = simulate_half_inning(home_lineup, away_pitcher, home_pos,
+        r, home_pos = simulate_half_inning(home_lineup, away_xp, home_pos,
                                             park_factors, weather_adj)
         home_runs += r
         extra += 1
 
-    # If still tied after max extra innings, flip a coin so neither team
-    # is systematically disadvantaged in the win-probability tally.
+    # After max extra innings still tied: flip a coin so neither side is
+    # systematically penalised in the win-probability count.
     if home_runs == away_runs:
         if random.random() < 0.5:
             home_runs += 1
@@ -206,16 +228,19 @@ def simulate_game(home_lineup: list[PlayerProfile], away_lineup: list[PlayerProf
     }
 
 
-def run_monte_carlo(home_lineup: list[PlayerProfile], away_lineup: list[PlayerProfile],
-                    home_pitcher: PlayerProfile, away_pitcher: PlayerProfile,
-                    park_factors: dict | None = None, weather_adj: dict | None = None,
-                    n_sims: int = 10_000) -> dict:
+def run_monte_carlo(home_lineup: list[PlayerProfile],
+                    away_lineup: list[PlayerProfile],
+                    home_pitcher: PlayerProfile,
+                    away_pitcher: PlayerProfile,
+                    park_factors: dict | None = None,
+                    weather_adj: dict | None = None,
+                    n_sims: int = 10_000,
+                    home_bullpen: PlayerProfile | None = None,
+                    away_bullpen: PlayerProfile | None = None) -> dict:
     """
-    Run n_sims game simulations. Returns win probabilities and run distribution stats.
-
-    Totals keys follow the same format as _check_totals(): float 7.5 → "over_7_5".
-    All lines from 5.5 to 15.0 (both .5 and integer marks) are included so that
-    any total line the odds API returns can be looked up without a miss.
+    Run n_sims game simulations.
+    Totals keys follow the same format as _check_totals(): 7.5 → "over_7_5".
+    All lines from 5.5 to 15.0 are included so no odds-API line ever misses.
     """
     home_wins = 0
     totals: list[int] = []
@@ -223,8 +248,13 @@ def run_monte_carlo(home_lineup: list[PlayerProfile], away_lineup: list[PlayerPr
     away_runs_list: list[int] = []
 
     for _ in range(n_sims):
-        result = simulate_game(home_lineup, away_lineup, home_pitcher, away_pitcher,
-                                park_factors, weather_adj)
+        result = simulate_game(
+            home_lineup, away_lineup,
+            home_pitcher, away_pitcher,
+            park_factors, weather_adj,
+            home_bullpen=home_bullpen,
+            away_bullpen=away_bullpen,
+        )
         if result["winner"] == "home":
             home_wins += 1
         totals.append(result["total"])
@@ -235,8 +265,6 @@ def run_monte_carlo(home_lineup: list[PlayerProfile], away_lineup: list[PlayerPr
     h = np.array(home_runs_list)
     a = np.array(away_runs_list)
 
-    # Dynamically compute over prob for every standard MLB totals line.
-    # Covers 5.5, 6.0, 6.5, …, 15.0 so _check_totals() never gets a cache miss.
     over_probs = {
         f"over_{str(line).replace('.', '_')}": float((t > line).mean())
         for line in _MLB_TOTAL_LINES
