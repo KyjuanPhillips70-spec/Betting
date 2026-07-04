@@ -12,6 +12,10 @@ from loguru import logger
 BASE_URL = "https://statsapi.mlb.com/api"
 CURRENT_SEASON = 2026
 
+# Games in these abstract states are already underway or finished;
+# fetching pitcher/lineup data for them wastes API quota.
+_SKIP_STATES = {"Live", "Final", "Game Over", "Completed Early"}
+
 _SESSION = requests.Session()
 _SESSION.headers["User-Agent"] = "BettingBot/1.0 (personal, non-commercial research)"
 
@@ -91,6 +95,18 @@ def get_player_stats(person_id: int, group: str = "hitting",
                 {"stats": "season", "group": group, "season": season})
     splits = _first_splits(data)
     return splits[0].get("stat", {}) if splits else {}
+
+
+def get_pitcher_hand(person_id: int) -> str:
+    """
+    Fetch pitcher's throwing hand from the MLB Stats API.
+    Returns 'L' or 'R'. Falls back to 'R' on error.
+    """
+    data = _get(f"/v1/people/{person_id}", {"hydrate": "pitchHand"})
+    people = data.get("people", [])
+    if not people:
+        return "R"
+    return people[0].get("pitchHand", {}).get("code", "R")
 
 
 def get_players_batting_stats(player_ids: list[int],
@@ -179,9 +195,10 @@ def get_boxscore(game_pk: str) -> dict:
 
 def assemble_pregame_bundle(game_date: date | None = None) -> list[dict]:
     """
-    Full pre-game data bundle for every game on a date.
+    Full pre-game data bundle for every pre-game scheduled game on a date.
+    Skips games that are already Live or Final to avoid wasted API calls.
     Fetches (in order):
-      - Probable pitcher season stats + splits
+      - Probable pitcher season stats + splits + throwing hand
       - Team batting aggregate (fallback lineup)
       - Team pitching aggregate (bullpen proxy)
       - Per-player batting stats when confirmed lineup is available (batch call)
@@ -190,11 +207,18 @@ def assemble_pregame_bundle(game_date: date | None = None) -> list[dict]:
     logger.info("Found {} MLB games for {}", len(games), game_date or date.today())
 
     for game in games:
+        state = game.get("status", "")
+        if state in _SKIP_STATES:
+            logger.info("Skipping {} @ {} (status={})",
+                        game.get("away_team", "?"), game.get("home_team", "?"), state)
+            continue
+
         for side in ("home", "away"):
             pid = game.get(f"{side}_pitcher_id")
             if pid:
                 game[f"{side}_pitcher_stats"]  = get_player_stats(pid, "pitching")
                 game[f"{side}_pitcher_splits"] = get_player_splits(pid, "pitching")
+                game[f"{side}_pitcher_hand"]   = get_pitcher_hand(pid)
                 time.sleep(0.15)
 
             tid = game.get(f"{side}_team_id")

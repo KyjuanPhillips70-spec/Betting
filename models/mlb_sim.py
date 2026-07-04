@@ -123,7 +123,8 @@ def _advance_bases(runners: list[int], outcome: str) -> tuple[list[int], int]:
     if outcome == "1B":
         r1, r2, r3 = runners
         runs += r3
-        # Runner on 2nd: scores ~65% of the time on a single (league-average)
+        # Runner on 2nd: scores ~65% of the time on a single (league-average);
+        # otherwise advances to 3rd while r1 takes 2nd.
         if r2 and random.random() < _P_SCORE_2ND_ON_1B:
             runs += 1
             return [1, r1, 0], runs
@@ -241,6 +242,8 @@ def run_monte_carlo(home_lineup: list[PlayerProfile],
     Run n_sims game simulations.
     Totals keys follow the same format as _check_totals(): 7.5 → "over_7_5".
     All lines from 5.5 to 15.0 are included so no odds-API line ever misses.
+    Run-line keys cover both home-favorite (home_minus_1_5) and
+    away-favorite (away_minus_1_5) configurations.
     """
     home_wins = 0
     totals: list[int] = []
@@ -277,8 +280,12 @@ def run_monte_carlo(home_lineup: list[PlayerProfile],
         "mean_home_runs":          float(h.mean()),
         "mean_away_runs":          float(a.mean()),
         "n_sims":                  n_sims,
+        # Run-line covers: home lays 1.5 (home-favorite game)
         "run_line_home_minus_1_5": float((h - a > 1.5).mean()),
         "run_line_away_plus_1_5":  float((a - h > -1.5).mean()),
+        # Run-line covers: away lays 1.5 (away-favorite game)
+        "run_line_away_minus_1_5": float((a - h > 1.5).mean()),
+        "run_line_home_plus_1_5":  float((h - a > -1.5).mean()),
         **over_probs,
     }
 

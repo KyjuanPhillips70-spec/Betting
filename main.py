@@ -295,6 +295,10 @@ def run_mlb(game_date: date | None = None, n_sims: int = 10_000) -> list[BetAler
     all_alerts: list[BetAlert] = []
 
     for game in games:
+        # Skip games that were already live/final when schedule was fetched
+        if not game.get("home_team") or not game.get("away_team"):
+            continue
+
         logger.info("Game: {} @ {}", game["away_team"], game["home_team"])
         upsert_game({**game, "sport": "MLB"})
 
@@ -356,14 +360,14 @@ def run_mlb(game_date: date | None = None, n_sims: int = 10_000) -> list[BetAler
                 for i in range(9)
             ]
 
-        # Starter profiles (real season pitching stats)
+        # Starter profiles with real pitch hand from Stats API (not hardcoded 'R')
         home_pitcher = _build_pitcher_profile(
             game.get("home_pitcher_id"), game.get("home_pitcher"),
-            "R", game.get("home_pitcher_stats", {})
+            game.get("home_pitcher_hand", "R"), game.get("home_pitcher_stats", {})
         )
         away_pitcher = _build_pitcher_profile(
             game.get("away_pitcher_id"), game.get("away_pitcher"),
-            "R", game.get("away_pitcher_stats", {})
+            game.get("away_pitcher_hand", "R"), game.get("away_pitcher_stats", {})
         )
 
         # Bullpen profiles from team pitching aggregate (innings 6+)
@@ -458,43 +462,52 @@ def run_soccer(game_date: date | None = None) -> list[BetAlert]:
     all_alerts: list[BetAlert] = []
 
     for league in LEAGUES:
-        odds_events = get_odds(league, markets="h2h,totals")
+        # Include BTTS market for soccer (The Odds API supports market key "btts")
+        odds_events = get_odds(league, markets="h2h,totals,btts")
         if not odds_events:
             logger.info("No {} odds events today.", league.upper())
             continue
         logger.info("{}: {} fixture(s) with odds", league.upper(), len(odds_events))
 
-        standings = get_soccer_standings(league)
-        if standings and sum(s["games_played"] for s in standings) > 0:
-            total_gp   = sum(s["games_played"] for s in standings)
-            total_gf   = sum(s["goals_for"]    for s in standings)
-            league_avg = (total_gf / total_gp) if total_gp > 0 else _INTL_AVG
-            attack:  dict[str, float] = {}
-            defense: dict[str, float] = {}
-            for row in standings:
-                gp = row["games_played"]
-                attack[row["team_name"]]  = (row["goals_for"]     / gp) / league_avg
-                defense[row["team_name"]] = (row["goals_against"] / gp) / league_avg
-            logger.info("WORLD_CUP: ESPN standings ({} teams, avg={:.3f})",
-                        len(standings), league_avg)
+        # ---------------------------------------------------------------------------
+        # Ratings: World Cup always uses Bayesian-blended ratings from match results.
+        # Raw ESPN standings from 3 group-stage games are too noisy to use directly;
+        # _ratings_from_wc_results() blends actual data against pre-tournament priors
+        # using w = n / (n + 8) weighting, which is far more stable at small n.
+        # For non-WC leagues, fall back to ESPN standings.
+        # ---------------------------------------------------------------------------
+        attack:  dict[str, float] = {}
+        defense: dict[str, float] = {}
+        league_avg: float = _INTL_AVG
 
-        elif league == "world_cup":
+        if league == "world_cup":
             wc_results = get_wc_results()
             if len(wc_results) >= 4:
                 attack, defense, league_avg = _ratings_from_wc_results(
                     wc_results, _INTL_AVG
                 )
-                logger.info("WORLD_CUP: {} completed matches → live-blended ratings",
+                logger.info("WORLD_CUP: {} matches → Bayesian-blended ratings",
                             len(wc_results))
             else:
-                league_avg = _INTL_AVG
                 attack  = {k: v["attack"]  for k, v in _WC_RATINGS.items()}
                 defense = {k: v["defense"] for k, v in _WC_RATINGS.items()}
                 logger.info("WORLD_CUP: {} results (< 4); using pre-tournament ratings",
                             len(wc_results))
         else:
-            logger.warning("{}: no ratings data; skipping.", league.upper())
-            continue
+            standings = get_soccer_standings(league)
+            if standings and sum(s["games_played"] for s in standings) > 0:
+                total_gp   = sum(s["games_played"] for s in standings)
+                total_gf   = sum(s["goals_for"]    for s in standings)
+                league_avg = (total_gf / total_gp) if total_gp > 0 else _INTL_AVG
+                for row in standings:
+                    gp = row["games_played"]
+                    attack[row["team_name"]]  = (row["goals_for"]     / gp) / league_avg
+                    defense[row["team_name"]] = (row["goals_against"] / gp) / league_avg
+                logger.info("{}: ESPN standings ({} teams, avg={:.3f})",
+                            league.upper(), len(standings), league_avg)
+            else:
+                logger.warning("{}: no ratings data; skipping.", league.upper())
+                continue
 
         espn_names = list(attack.keys())
 

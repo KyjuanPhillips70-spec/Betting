@@ -112,6 +112,11 @@ def find_mlb_edges(game: dict, sim: dict, snapshots: list[dict]) -> list[BetAler
 
     # Totals
     alerts.extend(_check_totals("MLB", event, snapshots, sim))
+
+    # Run line (spread) — handles both home-favorite and away-favorite configurations
+    alerts.extend(_check_run_line(event, snapshots, sim,
+                                  game.get("home_team", "home"),
+                                  game.get("away_team", "away")))
     return alerts
 
 
@@ -156,6 +161,74 @@ def _check_totals(sport: str, event: str, snapshots: list[dict],
     return alerts
 
 
+def _check_run_line(event: str, snapshots: list[dict], sim: dict,
+                    home_team: str, away_team: str) -> list[BetAlert]:
+    """
+    Detect +EV on the MLB run line (spread).
+    Only ±1.5 is modeled in the Monte Carlo output; other alternate lines are
+    silently skipped. Handles both home-favorite (-1.5) and away-favorite
+    (-1.5 on away side) configurations.
+    """
+    alerts: list[BetAlert] = []
+    spread_snaps = [s for s in snapshots if s.get("market") == "spreads"]
+    if not spread_snaps:
+        return alerts
+
+    # Collect all unique absolute-value lines offered across all books
+    abs_lines: set[float] = set()
+    for s in spread_snaps:
+        pt = s.get("point")
+        if pt is not None:
+            abs_lines.add(abs(pt))
+
+    for line in abs_lines:
+        if line != 1.5:
+            # Only ±1.5 is represented in the MC output; skip alternate lines
+            continue
+
+        # ---- Case A: home team is the run-line favorite (home at -1.5) ----
+        home_neg = [s for s in spread_snaps
+                    if s.get("point") == -line
+                    and home_team.lower() in s.get("outcome", "").lower()]
+        away_pos  = [s for s in spread_snaps
+                    if s.get("point") == line
+                    and away_team.lower() in s.get("outcome", "").lower()]
+
+        if home_neg and away_pos:
+            bh = max(home_neg, key=lambda s: american_to_decimal(s["price"]))
+            ba = max(away_pos,  key=lambda s: american_to_decimal(s["price"]))
+            fh, fa = devig_two_way(bh["price"], ba["price"])
+            for label, mp, fp, snap in [
+                (f"{home_team} -{line:.1f}", sim.get("run_line_home_minus_1_5", 0.0), fh, bh),
+                (f"{away_team} +{line:.1f}", sim.get("run_line_away_plus_1_5",  0.0), fa, ba),
+            ]:
+                a = _make_alert("MLB", event, label, mp, fp, snap)
+                if a:
+                    alerts.append(a)
+
+        # ---- Case B: away team is the run-line favorite (away at -1.5) ----
+        away_neg = [s for s in spread_snaps
+                    if s.get("point") == -line
+                    and away_team.lower() in s.get("outcome", "").lower()]
+        home_pos  = [s for s in spread_snaps
+                    if s.get("point") == line
+                    and home_team.lower() in s.get("outcome", "").lower()]
+
+        if away_neg and home_pos:
+            ba = max(away_neg, key=lambda s: american_to_decimal(s["price"]))
+            bh = max(home_pos,  key=lambda s: american_to_decimal(s["price"]))
+            fa, fh = devig_two_way(ba["price"], bh["price"])
+            for label, mp, fp, snap in [
+                (f"{away_team} -{line:.1f}", sim.get("run_line_away_minus_1_5", 0.0),        fa, ba),
+                (f"{home_team} +{line:.1f}", sim.get("run_line_home_plus_1_5",  0.0),        fh, bh),
+            ]:
+                a = _make_alert("MLB", event, label, mp, fp, snap)
+                if a:
+                    alerts.append(a)
+
+    return alerts
+
+
 def find_soccer_edges(fixture: dict, model: dict, snapshots: list[dict]) -> list[BetAlert]:
     """
     Compare soccer model probabilities against sportsbook odds.
@@ -183,11 +256,27 @@ def find_soccer_edges(fixture: dict, model: dict, snapshots: list[dict]) -> list
             if a:
                 alerts.append(a)
 
-    # All supported total lines — matrix_to_markets() now supplies 0.5, 1.5, 2.5, 3.5
+    # All supported total lines — matrix_to_markets() supplies 0.5, 1.5, 2.5, 3.5
     alerts.extend(_check_totals("Soccer", event, snapshots, {
         "over_0_5": model.get("over_0_5", 0),
         "over_1_5": model.get("over_1_5", 0),
         "over_2_5": model.get("over_2_5", 0),
         "over_3_5": model.get("over_3_5", 0),
     }))
+
+    # BTTS (Both Teams to Score) — market key "btts", outcomes "Yes" / "No"
+    btts_snaps = [s for s in snapshots if s.get("market") == "btts"]
+    best_yes = _best_by_outcome(btts_snaps, "yes")
+    best_no  = _best_by_outcome(btts_snaps, "no")
+    if best_yes and best_no:
+        fair_yes, fair_no = devig_two_way(best_yes["price"], best_no["price"])
+        btts_p = model.get("btts", 0.0)
+        for label, mp, fp, snap in [
+            ("BTTS Yes", btts_p,         fair_yes, best_yes),
+            ("BTTS No",  1.0 - btts_p,   fair_no,  best_no),
+        ]:
+            a = _make_alert("Soccer", event, label, mp, fp, snap)
+            if a:
+                alerts.append(a)
+
     return alerts
