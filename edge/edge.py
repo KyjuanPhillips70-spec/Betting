@@ -26,6 +26,10 @@ KELLY_FRAC   = float(os.getenv("MAX_KELLY_FRACTION", "0.20"))   # lowered from 0
 BANKROLL_U   = float(os.getenv("BANKROLL_UNITS",     "100.0"))
 MODEL_WEIGHT = float(os.getenv("MODEL_WEIGHT",       "0.40"))   # trust in our model vs market
 
+# Raw model-vs-market disagreement above this threshold usually signals bad
+# input data rather than a genuine edge. Warn so the operator can investigate.
+_SANITY_DISAGREEMENT = 0.30
+
 
 def _blend(model_p: float, fair_p: float) -> float:
     """
@@ -43,8 +47,21 @@ def _make_alert(sport: str, event: str, market_label: str,
     edge = blended_p - fair_p
     if edge < MIN_EDGE:
         return None
+
+    # Sanity check: a huge raw disagreement usually means bad input data.
+    raw_diff = abs(model_p - fair_p)
+    if raw_diff > _SANITY_DISAGREEMENT:
+        logger.warning(
+            "Large model-market gap ({:.1%}) for {} | {} — verify inputs.",
+            raw_diff, event, market_label
+        )
+
     dec = american_to_decimal(best_snap["price"])
     units = kelly_units(blended_p, dec, BANKROLL_U, KELLY_FRAC)
+    if units <= 0:
+        logger.debug("Zero-stake bet suppressed: {} | {}", event, market_label)
+        return None
+
     logger.info("Edge found: {} | {} | model={:.1%} fair={:.1%} edge={:.1%} units={:.2f}",
                 event, market_label, model_p, fair_p, edge, units)
     return BetAlert(
@@ -111,23 +128,29 @@ def _check_totals(sport: str, event: str, snapshots: list[dict],
             continue
         seen_lines.add(line)
 
-        best_over  = _best_by_outcome(total_snaps, "over")
-        best_under = _best_by_outcome(total_snaps, "under")
+        # CRITICAL: only compare prices for THIS specific line.
+        # Using all total_snaps would mix model prob for line=7.5 with
+        # the best price which might be from line=8.5 — completely wrong.
+        line_snaps = [s for s in total_snaps if s.get("point") == line]
+        best_over  = _best_by_outcome(line_snaps, "over")
+        best_under = _best_by_outcome(line_snaps, "under")
         if not best_over or not best_under:
             continue
 
         key_over = f"over_{str(line).replace('.', '_')}"
         model_over = sim.get(key_over)
         if model_over is None:
+            logger.debug("No model prob for {} total line {} ({}); skipping.",
+                         sport, line, key_over)
             continue
         model_under = 1.0 - model_over
         fair_over, fair_under = devig_two_way(best_over["price"], best_under["price"])
 
-        for side, model_p, fair_p, snap in [
+        for side, model_p, fair_p, s in [
             (f"Over {line}",  model_over,  fair_over,  best_over),
             (f"Under {line}", model_under, fair_under, best_under),
         ]:
-            a = _make_alert(sport, event, side, model_p, fair_p, snap)
+            a = _make_alert(sport, event, side, model_p, fair_p, s)
             if a:
                 alerts.append(a)
     return alerts
@@ -137,7 +160,7 @@ def find_soccer_edges(fixture: dict, model: dict, snapshots: list[dict]) -> list
     """
     Compare soccer model probabilities against sportsbook odds.
     fixture: dict with home_team, away_team
-    model:   dict from soccer_model.predict (home_win, draw, away_win, over_2_5, over_1_5, btts)
+    model:   dict from soccer_model.predict (home_win, draw, away_win, over_*, btts)
     snapshots: list of odds snapshots for this game
     """
     alerts: list[BetAlert] = []
@@ -160,8 +183,11 @@ def find_soccer_edges(fixture: dict, model: dict, snapshots: list[dict]) -> list
             if a:
                 alerts.append(a)
 
+    # All supported total lines — matrix_to_markets() now supplies 0.5, 1.5, 2.5, 3.5
     alerts.extend(_check_totals("Soccer", event, snapshots, {
-        "over_2_5": model.get("over_2_5", 0),
+        "over_0_5": model.get("over_0_5", 0),
         "over_1_5": model.get("over_1_5", 0),
+        "over_2_5": model.get("over_2_5", 0),
+        "over_3_5": model.get("over_3_5", 0),
     }))
     return alerts

@@ -22,7 +22,9 @@ from loguru import logger
 from dotenv import load_dotenv
 load_dotenv()
 
-from storage.database import init_db, upsert_game, insert_bet_log
+from storage.database import (
+    init_db, upsert_game, insert_bet_log, insert_odds_snapshot,
+)
 from ingestion.mlb_statsapi import assemble_pregame_bundle
 from ingestion.weather import get_game_weather
 from ingestion.odds import get_odds, parse_odds_to_snapshots
@@ -44,6 +46,10 @@ _INTL_AVG = 1.35   # international goals per game per team (neutral-site)
 # attack / defense are multipliers relative to _INTL_AVG.
 # Values derived from pre-tournament Elo; used as Bayesian prior when
 # actual match data is sparse (< 8 games played).
+#
+# NOTE: Use only ONE canonical name per team.  The fuzzy matcher in
+# run_soccer() handles minor name variations from ESPN (e.g. "USA" → "United
+# States").  Duplicate keys would cause double-counting in Bayesian blending.
 # ---------------------------------------------------------------------------
 _WC_RATINGS: dict[str, dict[str, float]] = {
     "Brazil":            {"attack": 1.55, "defense": 0.70},
@@ -63,7 +69,6 @@ _WC_RATINGS: dict[str, dict[str, float]] = {
     "Mexico":            {"attack": 1.15, "defense": 0.88},
     "Switzerland":       {"attack": 1.12, "defense": 0.86},
     "United States":     {"attack": 1.10, "defense": 0.90},
-    "USA":               {"attack": 1.10, "defense": 0.90},
     "Senegal":           {"attack": 1.10, "defense": 0.90},
     "Morocco":           {"attack": 1.10, "defense": 0.88},
     "Japan":             {"attack": 1.08, "defense": 0.90},
@@ -87,7 +92,7 @@ _WC_RATINGS: dict[str, dict[str, float]] = {
     "Bolivia":           {"attack": 0.85, "defense": 1.12},
     "Nigeria":           {"attack": 0.88, "defense": 1.08},
     "Ivory Coast":       {"attack": 0.88, "defense": 1.08},
-    "Côte d'Ivoire": {"attack": 0.88, "defense": 1.08},
+    "Côte d'Ivoire":     {"attack": 0.88, "defense": 1.08},
     "Cameroon":          {"attack": 0.85, "defense": 1.10},
     "Egypt":             {"attack": 0.85, "defense": 1.10},
     "Algeria":           {"attack": 0.85, "defense": 1.10},
@@ -105,6 +110,19 @@ _WC_RATINGS: dict[str, dict[str, float]] = {
     "El Salvador":       {"attack": 0.70, "defense": 1.22},
     "Indonesia":         {"attack": 0.68, "defense": 1.25},
     "Cuba":              {"attack": 0.68, "defense": 1.25},
+}
+
+# Short-name aliases that ESPN or odds APIs may return, mapped to canonical keys above
+_WC_ALIASES: dict[str, str] = {
+    "USA":              "United States",
+    "US":               "United States",
+    "Cote d'Ivoire":    "Côte d'Ivoire",
+    "Ivory Coast":      "Ivory Coast",
+    "Korea Republic":   "South Korea",
+    "Republic of Korea": "South Korea",
+    "IR Iran":          "Iran",
+    "Czechia":          "Czech Republic",
+    "Türkiye":          "Turkey",
 }
 
 
@@ -169,7 +187,9 @@ def _ratings_from_wc_results(
         w = n / (n + PRIOR_GAMES)
         raw_atk = (sum(scored[team]) / n) / league_avg
         raw_def = (sum(conceded[team]) / n) / league_avg
-        pre = _WC_RATINGS.get(team, {"attack": 1.0, "defense": 1.0})
+        # Resolve aliases before looking up WC prior
+        canonical = _WC_ALIASES.get(team, team)
+        pre = _WC_RATINGS.get(canonical, {"attack": 1.0, "defense": 1.0})
         attack[team]  = w * raw_atk + (1 - w) * pre["attack"]
         defense[team] = w * raw_def + (1 - w) * pre["defense"]
 
@@ -187,6 +207,15 @@ def _build_profile(pid, name: str, hand: str, stats: dict) -> PlayerProfile:
     if not rates:
         rates = LEAGUE_RATES.copy()
     return PlayerProfile(str(pid or "unk"), name or "TBD", hand, rates)
+
+
+def _store_snapshots(snapshots: list[dict], game_pk: str) -> None:
+    """Best-effort: persist odds snapshots for CLV tracking; never crashes the pipeline."""
+    for snap in snapshots:
+        try:
+            insert_odds_snapshot({**snap, "game_pk": game_pk})
+        except Exception as exc:
+            logger.debug("Snapshot insert skipped ({}): {}", snap.get("outcome", "?"), exc)
 
 
 def run_mlb(game_date: date | None = None,
@@ -296,6 +325,9 @@ def run_mlb(game_date: date | None = None,
             logger.warning("No odds for {} @ {}", game["away_team"], game["home_team"])
             continue
 
+        # Store odds snapshots for CLV tracking (best-effort)
+        _store_snapshots(game_odds, eid or game.get("game_pk", ""))
+
         alerts = find_mlb_edges(game, sim, game_odds)
 
         # Tag each pick with the projected score from the simulation
@@ -309,16 +341,17 @@ def run_mlb(game_date: date | None = None,
 
         for alert in alerts:
             insert_bet_log({
-                "sport":      alert.sport,
-                "event":      alert.event,
-                "market":     alert.market,
-                "book":       alert.book,
-                "line":       alert.line,
-                "model_prob": alert.model_prob,
-                "fair_prob":  alert.fair_prob,
-                "edge":       alert.edge,
-                "stake_units": alert.stake_units,
-                "ev":         alert.edge,
+                "sport":          alert.sport,
+                "event":          alert.event,
+                "market":         alert.market,
+                "book":           alert.book,
+                "line":           alert.line,
+                "model_prob":     alert.model_prob,
+                "fair_prob":      alert.fair_prob,
+                "edge":           alert.edge,
+                "stake_units":    alert.stake_units,
+                "ev":             alert.edge,
+                "projected_score": proj,
             })
         all_alerts.extend(alerts)
 
@@ -369,7 +402,7 @@ def run_soccer(game_date: date | None = None) -> list[BetAlert]:
                         len(standings), league_avg)
 
         elif league == "world_cup":
-            # Try live WC results from ESPN scoreboard
+            # Try live WC results from ESPN scoreboard (cached in DB)
             wc_results = get_wc_results()
             if len(wc_results) >= 4:
                 attack, defense, league_avg = _ratings_from_wc_results(
@@ -394,6 +427,10 @@ def run_soccer(game_date: date | None = None) -> list[BetAlert]:
         espn_names = list(attack.keys())
 
         def _match(name: str) -> str:
+            # Check alias table first (e.g. "USA" → "United States")
+            canonical = _WC_ALIASES.get(name, name)
+            if canonical in attack:
+                return canonical
             if name in attack:
                 return name
             hits = difflib.get_close_matches(name, espn_names, n=1, cutoff=0.4)
@@ -416,6 +453,9 @@ def run_soccer(game_date: date | None = None) -> list[BetAlert]:
             fixture   = {"home_team": home_raw, "away_team": away_raw}
             alerts    = find_soccer_edges(fixture, model_probs, snapshots)
 
+            # Store odds snapshots for CLV tracking (best-effort)
+            _store_snapshots(snapshots, event.get("id", ""))
+
             # Tag each pick with the projected scoreline from the Poisson model
             proj = f"Proj: {home_raw} {lam_h:.2f} – {away_raw} {lam_a:.2f} goals"
             for alert in alerts:
@@ -423,16 +463,17 @@ def run_soccer(game_date: date | None = None) -> list[BetAlert]:
 
             for alert in alerts:
                 insert_bet_log({
-                    "sport":       alert.sport,
-                    "event":       alert.event,
-                    "market":      alert.market,
-                    "book":        alert.book,
-                    "line":        alert.line,
-                    "model_prob":  alert.model_prob,
-                    "fair_prob":   alert.fair_prob,
-                    "edge":        alert.edge,
-                    "stake_units": alert.stake_units,
-                    "ev":          alert.edge,
+                    "sport":           alert.sport,
+                    "event":           alert.event,
+                    "market":          alert.market,
+                    "book":            alert.book,
+                    "line":            alert.line,
+                    "model_prob":      alert.model_prob,
+                    "fair_prob":       alert.fair_prob,
+                    "edge":            alert.edge,
+                    "stake_units":     alert.stake_units,
+                    "ev":              alert.edge,
+                    "projected_score": proj,
                 })
             all_alerts.extend(alerts)
             league_alerts += len(alerts)
@@ -455,11 +496,18 @@ def run_daily_card(game_date: date | None = None,
 
     all_alerts: list[BetAlert] = []
 
+    # Each sport is isolated so one failure does not block the other
     if sport in ("mlb", "all"):
-        all_alerts.extend(run_mlb(game_date, n_sims))
+        try:
+            all_alerts.extend(run_mlb(game_date, n_sims))
+        except Exception as exc:
+            logger.error("MLB pipeline failed: {}", exc)
 
     if sport in ("soccer", "all"):
-        all_alerts.extend(run_soccer(game_date))
+        try:
+            all_alerts.extend(run_soccer(game_date))
+        except Exception as exc:
+            logger.error("Soccer pipeline failed: {}", exc)
 
     if not all_alerts:
         logger.info("No +EV bets found today.")
@@ -509,9 +557,15 @@ def main() -> None:
             alerter = None
         alerts: list[BetAlert] = []
         if args.sport in ("mlb", "all"):
-            alerts.extend(run_mlb(game_date, args.sims))
+            try:
+                alerts.extend(run_mlb(game_date, args.sims))
+            except Exception as exc:
+                logger.error("MLB pipeline failed: {}", exc)
         if args.sport in ("soccer", "all"):
-            alerts.extend(run_soccer(game_date))
+            try:
+                alerts.extend(run_soccer(game_date))
+            except Exception as exc:
+                logger.error("Soccer pipeline failed: {}", exc)
         if alerter and alerts:
             alerter.send_batch(alerts)
         elif not alerts:

@@ -34,21 +34,28 @@ def build_score_matrix(lambda_home: float, lambda_away: float,
 
 
 def matrix_to_markets(m: np.ndarray) -> dict[str, float]:
-    """Convert score matrix to 1X2, over/unders, and BTTS."""
+    """Convert score matrix to 1X2, over/unders (0.5–3.5), and BTTS."""
     max_g = m.shape[0] - 1
     home_win = float(np.tril(m, -1).sum())
     draw     = float(np.diag(m).sum())
     away_win = float(np.triu(m, 1).sum())
-    over_1_5 = over_2_5 = btts = 0.0
+    over_0_5 = over_1_5 = over_2_5 = over_3_5 = btts = 0.0
     for h in range(max_g + 1):
         for a in range(max_g + 1):
             p = m[h, a]
-            if h + a > 1.5: over_1_5 += p
-            if h + a > 2.5: over_2_5 += p
+            total = h + a
+            if total > 0.5: over_0_5 += p
+            if total > 1.5: over_1_5 += p
+            if total > 2.5: over_2_5 += p
+            if total > 3.5: over_3_5 += p
             if h > 0 and a > 0: btts += p
     return {
         "home_win": home_win, "draw": draw, "away_win": away_win,
-        "over_1_5": over_1_5, "over_2_5": over_2_5, "btts": btts,
+        "over_0_5": over_0_5,
+        "over_1_5": over_1_5,
+        "over_2_5": over_2_5,
+        "over_3_5": over_3_5,
+        "btts":     btts,
     }
 
 
@@ -94,8 +101,10 @@ class DixonColesModel:
                 "home_win": probs.get("home_win", 0),
                 "draw":     probs.get("draw", 0),
                 "away_win": probs.get("away_win", 0),
-                "over_2_5": probs.get("over_2.5", 0),
+                "over_0_5": probs.get("over_0.5", 0),
                 "over_1_5": probs.get("over_1.5", 0),
+                "over_2_5": probs.get("over_2.5", 0),
+                "over_3_5": probs.get("over_3.5", 0),
                 "btts":     probs.get("btts", 0),
             }
         except Exception as e:

@@ -73,53 +73,91 @@ def get_soccer_scoreboard(league_key: str, game_date: date | None = None) -> lis
     return data.get("events", [])
 
 
+def _parse_wc_events(events: list, match_date: str) -> list[dict]:
+    """Extract completed match results from a list of ESPN scoreboard events."""
+    results = []
+    for event in events:
+        if not event.get("status", {}).get("type", {}).get("completed", False):
+            continue
+        comp = (event.get("competitions") or [{}])[0]
+        competitors = comp.get("competitors", [])
+        if len(competitors) < 2:
+            continue
+        home_c = next((c for c in competitors if c.get("homeAway") == "home"),
+                      competitors[0])
+        away_c = next((c for c in competitors if c.get("homeAway") == "away"),
+                      competitors[1])
+        try:
+            h_goals = int(home_c.get("score", 0) or 0)
+            a_goals = int(away_c.get("score", 0) or 0)
+        except (ValueError, TypeError):
+            continue
+        h_name = home_c.get("team", {}).get("displayName", "")
+        a_name = away_c.get("team", {}).get("displayName", "")
+        if h_name and a_name:
+            results.append({
+                "match_date": match_date,
+                "home_team":  h_name,
+                "away_team":  a_name,
+                "home_goals": h_goals,
+                "away_goals": a_goals,
+            })
+    return results
+
+
 def get_wc_results() -> list[dict]:
     """
-    Fetch every completed 2026 FIFA World Cup match by scanning each calendar
-    day from the tournament opener (2026-06-11) through today.
+    Fetch every completed 2026 FIFA World Cup match, with DB caching.
+
+    Past dates (before today) are fetched once and stored in wc_results_cache.
+    Today is always re-fetched so in-progress games that finish are captured.
+    This eliminates 23+ redundant ESPN API calls on every bot run.
 
     Returns list of {home_team, away_team, home_goals, away_goals}.
-    Used by run_soccer() to derive live attack/defense ratings, Bayesian-
-    blended with pre-tournament priors.
     """
     from datetime import timedelta
+    from storage.database import (
+        get_wc_dates_fetched, save_wc_date_fetched,
+        get_wc_results_cached, save_wc_results_cache,
+    )
+
     WC_START = date(2026, 6, 11)
-    slug = _SOCCER_SLUGS["world_cup"]
-    results: list[dict] = []
+    slug     = _SOCCER_SLUGS["world_cup"]
+    today    = date.today()
+
+    fetched_dates = get_wc_dates_fetched()   # ISO strings already in DB
+    new_results: list[dict] = []
+
     current = WC_START
-    today = date.today()
     while current <= today:
-        data = _get(f"{SITE_BASE}/sports/soccer/{slug}/scoreboard",
-                    {"dates": current.strftime("%Y%m%d")})
-        for event in data.get("events", []):
-            if not event.get("status", {}).get("type", {}).get("completed", False):
-                continue
-            comp = (event.get("competitions") or [{}])[0]
-            competitors = comp.get("competitors", [])
-            if len(competitors) < 2:
-                continue
-            home_c = next((c for c in competitors if c.get("homeAway") == "home"),
-                          competitors[0])
-            away_c = next((c for c in competitors if c.get("homeAway") == "away"),
-                          competitors[1])
-            try:
-                h_goals = int(home_c.get("score", 0) or 0)
-                a_goals = int(away_c.get("score", 0) or 0)
-            except (ValueError, TypeError):
-                continue
-            h_name = home_c.get("team", {}).get("displayName", "")
-            a_name = away_c.get("team", {}).get("displayName", "")
-            if h_name and a_name:
-                results.append({
-                    "home_team":  h_name,
-                    "away_team":  a_name,
-                    "home_goals": h_goals,
-                    "away_goals": a_goals,
-                })
+        date_iso = current.isoformat()       # "2026-06-11"
+        date_fmt = current.strftime("%Y%m%d") # "20260611" for ESPN API
+
+        # Skip past dates already in the cache — today always re-fetches
+        if current < today and date_iso in fetched_dates:
+            current += timedelta(days=1)
+            continue
+
+        data   = _get(f"{SITE_BASE}/sports/soccer/{slug}/scoreboard",
+                      {"dates": date_fmt})
+        events = data.get("events", [])
+        day_results = _parse_wc_events(events, date_iso)
+
+        if day_results:
+            save_wc_results_cache(day_results)
+            new_results.extend(day_results)
+
+        # Mark past dates as fully fetched (no re-fetch needed)
+        if current < today:
+            save_wc_date_fetched(date_iso)
+
         current += timedelta(days=1)
         time.sleep(0.1)
-    logger.info("WC: {} completed matches fetched", len(results))
-    return results
+
+    cached = get_wc_results_cached()
+    logger.info("WC: {} completed matches total ({} newly fetched this run)",
+                len(cached), len(new_results))
+    return cached
 
 
 def get_soccer_standings(league_key: str) -> list[dict]:
