@@ -1,6 +1,17 @@
 """
 Edge detection: compare model probabilities against de-vigged market lines.
 Produces BetAlert objects for bets that clear the minimum-edge threshold.
+
+Market blending: our model probability is blended with the market's devigged
+fair probability before the edge is calculated. MODEL_WEIGHT=0.40 means our
+model contributes 40% of the final probability, the market supplies the other
+60%. This anchors picks to market reality — the model only overrides the
+market when it has a strong, specific reason to disagree.
+
+Practical effect: a raw model-vs-market disagreement of at least
+  MIN_EDGE / MODEL_WEIGHT = 0.03 / 0.40 = 7.5%
+is required before any pick surfaces, which eliminates noise from dummy
+lineups and static pre-tournament soccer ratings.
 """
 from __future__ import annotations
 import os
@@ -10,28 +21,39 @@ from edge.odds_math import american_to_decimal, devig_two_way, devig_multi_way, 
 from edge.kelly import stake_units as kelly_units
 from alerting.telegram_alerts import BetAlert
 
-MIN_EDGE      = float(os.getenv("MIN_EDGE_THRESHOLD", "0.02"))
-KELLY_FRAC    = float(os.getenv("MAX_KELLY_FRACTION", "0.25"))
-BANKROLL_U    = float(os.getenv("BANKROLL_UNITS", "100.0"))
+MIN_EDGE     = float(os.getenv("MIN_EDGE_THRESHOLD", "0.03"))   # raised from 0.02
+KELLY_FRAC   = float(os.getenv("MAX_KELLY_FRACTION", "0.20"))   # lowered from 0.25
+BANKROLL_U   = float(os.getenv("BANKROLL_UNITS",     "100.0"))
+MODEL_WEIGHT = float(os.getenv("MODEL_WEIGHT",       "0.40"))   # trust in our model vs market
+
+
+def _blend(model_p: float, fair_p: float) -> float:
+    """
+    Blend model probability with the market's fair probability.
+    The blended value is what we compare against fair_p to get edge,
+    so edge = MODEL_WEIGHT * (model_p - fair_p).
+    """
+    return MODEL_WEIGHT * model_p + (1.0 - MODEL_WEIGHT) * fair_p
 
 
 def _make_alert(sport: str, event: str, market_label: str,
                 model_p: float, fair_p: float,
                 best_snap: dict) -> BetAlert | None:
-    edge = model_p - fair_p
+    blended_p = _blend(model_p, fair_p)
+    edge = blended_p - fair_p
     if edge < MIN_EDGE:
         return None
     dec = american_to_decimal(best_snap["price"])
-    units = kelly_units(model_p, dec, BANKROLL_U, KELLY_FRAC)
-    logger.info("Edge found: {} | {} | edge={:.1%} units={:.2f}",
-                event, market_label, edge, units)
+    units = kelly_units(blended_p, dec, BANKROLL_U, KELLY_FRAC)
+    logger.info("Edge found: {} | {} | model={:.1%} fair={:.1%} edge={:.1%} units={:.2f}",
+                event, market_label, model_p, fair_p, edge, units)
     return BetAlert(
         sport=sport,
         event=event,
         market=market_label,
         book=best_snap.get("book", "?"),
         line=f"{int(best_snap['price']):+d}",
-        model_prob=model_p,
+        model_prob=blended_p,
         fair_prob=fair_p,
         stake_units=units,
     )
@@ -94,7 +116,6 @@ def _check_totals(sport: str, event: str, snapshots: list[dict],
         if not best_over or not best_under:
             continue
 
-        # Look for the model probability matching this line
         key_over = f"over_{str(line).replace('.', '_')}"
         model_over = sim.get(key_over)
         if model_over is None:
