@@ -13,6 +13,7 @@ Usage:
 """
 from __future__ import annotations
 import os
+import time
 import difflib
 import argparse
 from collections import defaultdict
@@ -37,6 +38,7 @@ from models.weather_adj import get_weather_adjustments
 from config.park_factors import get_park_factors, park_factors_to_pa_adjustments
 from config.stadiums import get_stadium
 from edge.edge import find_mlb_edges, find_player_prop_edges
+from edge.odds_math import american_to_decimal, expected_value
 from alerting.telegram_alerts import TelegramAlerter, BetAlert
 
 
@@ -215,14 +217,40 @@ def _blend_matchup_rates(base_rates: dict, matchup_stats: dict,
                           pa_threshold: int = 15) -> dict:
     """
     Blend a batter's season rates with historical batter-vs-pitcher data.
-    Weight = min(PA / 60, 0.70) x 0.50 — max 35% at 60+ PA.
+    Weight = min(PA / 60, 0.70) × 0.50 — max 35% at 60+ PA.
     Falls back to base_rates when the matchup sample is below pa_threshold.
+
+    Computes matchup rates directly from raw counts rather than calling
+    _team_batting_to_rates, which returns LEAGUE_RATES for PA < 50 and
+    would silently erase small-sample matchup signal.
     """
     pa = matchup_stats.get("plateAppearances", 0) or 0
     if pa < pa_threshold:
         return base_rates
     weight = min(pa / 60.0, 0.70) * 0.50
-    matchup_rates = _team_batting_to_rates(matchup_stats)
+
+    ab      = matchup_stats.get("atBats", 0) or 0
+    h       = matchup_stats.get("hits", 0) or 0
+    bb      = matchup_stats.get("baseOnBalls", 0) or 0
+    hbp     = matchup_stats.get("hitByPitch", 0) or 0
+    so      = matchup_stats.get("strikeOuts", 0) or 0
+    hr      = matchup_stats.get("homeRuns", 0) or 0
+    doubles = matchup_stats.get("doubles", 0) or 0
+    triples = matchup_stats.get("triples", 0) or 0
+    singles = max(h - doubles - triples - hr, 0)
+    denom   = ab + bb + hbp
+    if denom == 0:
+        return base_rates
+    matchup_rates = {
+        "K_rate":   so / denom,
+        "BB_rate":  bb / denom,
+        "HBP_rate": hbp / denom,
+        "1B_rate":  singles / denom,
+        "2B_rate":  doubles / denom,
+        "3B_rate":  triples / denom,
+        "HR_rate":  hr / denom,
+        "out_rate": max(0.0, (ab - h)) / denom,
+    }
     blended = {
         k: (1 - weight) * base_rates.get(k, LEAGUE_RATES[k])
            + weight * matchup_rates.get(k, base_rates.get(k, LEAGUE_RATES[k]))
@@ -413,6 +441,7 @@ def run_mlb(game_date: date | None = None, n_sims: int = 10_000) -> list[BetAler
                         profile.rates = _blend_matchup_rates(profile.rates, matchup)
                     except Exception:
                         pass
+                    time.sleep(0.10)
         if home_starter_id:
             for profile in away_lineup:
                 if profile.player_id.isdigit():
@@ -422,6 +451,7 @@ def run_mlb(game_date: date | None = None, n_sims: int = 10_000) -> list[BetAler
                         profile.rates = _blend_matchup_rates(profile.rates, matchup)
                     except Exception:
                         pass
+                    time.sleep(0.10)
 
         try:
             sim = run_monte_carlo(
@@ -458,6 +488,11 @@ def run_mlb(game_date: date | None = None, n_sims: int = 10_000) -> list[BetAler
             alert.projected_score = proj
 
         for alert in alerts:
+            try:
+                _dec = american_to_decimal(int(alert.line))
+                _ev  = expected_value(alert.model_prob, _dec)
+            except (ValueError, ZeroDivisionError):
+                _ev = alert.edge
             insert_bet_log({
                 "sport":           alert.sport,
                 "event":           alert.event,
@@ -468,7 +503,7 @@ def run_mlb(game_date: date | None = None, n_sims: int = 10_000) -> list[BetAler
                 "fair_prob":       alert.fair_prob,
                 "edge":            alert.edge,
                 "stake_units":     alert.stake_units,
-                "ev":              alert.edge,
+                "ev":              _ev,
                 "projected_score": proj,
             })
         all_alerts.extend(alerts)
@@ -486,6 +521,11 @@ def run_mlb(game_date: date | None = None, n_sims: int = 10_000) -> list[BetAler
                     for a in prop_alerts:
                         a.projected_score = proj
                     for a in prop_alerts:
+                        try:
+                            _dec = american_to_decimal(int(a.line))
+                            _ev  = expected_value(a.model_prob, _dec)
+                        except (ValueError, ZeroDivisionError):
+                            _ev = a.edge
                         insert_bet_log({
                             "sport":           a.sport,
                             "event":           a.event,
@@ -496,7 +536,7 @@ def run_mlb(game_date: date | None = None, n_sims: int = 10_000) -> list[BetAler
                             "fair_prob":       a.fair_prob,
                             "edge":            a.edge,
                             "stake_units":     a.stake_units,
-                            "ev":              a.edge,
+                            "ev":              _ev,
                             "projected_score": proj,
                         })
                     all_alerts.extend(prop_alerts)
@@ -619,6 +659,11 @@ def run_soccer(game_date: date | None = None) -> list[BetAlert]:
                 alert.projected_score = proj
 
             for alert in alerts:
+                try:
+                    _dec = american_to_decimal(int(alert.line))
+                    _ev  = expected_value(alert.model_prob, _dec)
+                except (ValueError, ZeroDivisionError):
+                    _ev = alert.edge
                 insert_bet_log({
                     "sport":           alert.sport,
                     "event":           alert.event,
@@ -629,7 +674,7 @@ def run_soccer(game_date: date | None = None) -> list[BetAlert]:
                     "fair_prob":       alert.fair_prob,
                     "edge":            alert.edge,
                     "stake_units":     alert.stake_units,
-                    "ev":              alert.edge,
+                    "ev":              _ev,
                     "projected_score": proj,
                 })
             all_alerts.extend(alerts)

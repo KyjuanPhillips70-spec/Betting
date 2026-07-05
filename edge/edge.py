@@ -80,7 +80,7 @@ def _make_alert(sport: str, event: str, market_label: str,
         event=event,
         market=market_label,
         book=best_snap.get("book", "?"),
-        line=f"{int(best_snap['price']):+d}",
+        line=f"{round(float(best_snap['price'])):+d}",
         model_prob=blended_p,
         fair_prob=fair_p,
         stake_units=units,
@@ -284,17 +284,17 @@ def find_soccer_edges(fixture: dict, model: dict, snapshots: list[dict]) -> list
 # Player prop edge detection
 # ---------------------------------------------------------------------------
 
-def _find_player_by_name(name: str, player_names: dict[str, str]) -> str | None:
-    """Fuzzy-match a player name from the odds API to a sim player_id."""
+def _find_player_by_name(name: str, player_names: dict[str, str],
+                          _pids: list[str], _names: list[str]) -> str | None:
+    """Fuzzy-match a player name from the odds API to a sim player_id.
+    _pids and _names must be pre-built from player_names to avoid per-call rebuilds."""
     name_lo = name.lower()
     for pid, pname in player_names.items():
         if pname.lower() == name_lo:
             return pid
-    names = list(player_names.values())
-    pids  = list(player_names.keys())
-    hits  = difflib.get_close_matches(name, names, n=1, cutoff=0.75)
+    hits = difflib.get_close_matches(name, _names, n=1, cutoff=0.75)
     if hits:
-        return pids[names.index(hits[0])]
+        return _pids[_names.index(hits[0])]
     return None
 
 
@@ -316,6 +316,10 @@ def find_player_prop_edges(game: dict, sim: dict,
     event = f"{game.get('away_team','?')} @ {game.get('home_team','?')}"
     all_prop_markets = {**BATTER_PROP_MARKETS, **PITCHER_PROP_MARKETS}
 
+    # Pre-build once for all fuzzy lookups across all markets
+    _pids_list  = list(player_names.keys())
+    _names_list = list(player_names.values())
+
     for market_key, stat_key in all_prop_markets.items():
         market_snaps = [s for s in prop_snapshots if s.get("market") == market_key]
         if not market_snaps:
@@ -329,7 +333,7 @@ def find_player_prop_edges(game: dict, sim: dict,
                 player_snaps.setdefault(desc, []).append(snap)
 
         for player_name, snaps in player_snaps.items():
-            pid = _find_player_by_name(player_name, player_names)
+            pid = _find_player_by_name(player_name, player_names, _pids_list, _names_list)
             if pid is None:
                 continue
             stat_dist = distributions.get(pid, {}).get(stat_key)

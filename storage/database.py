@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS odds_snapshots (
     outcome        TEXT,
     price          REAL,
     point          REAL,
+    description    TEXT,
     snapshot_time  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -136,6 +137,12 @@ def _migrate_db() -> None:
             conn.execute("ALTER TABLE bets_log ADD COLUMN projected_score TEXT")
             logger.info("Migration: bets_log.projected_score added")
 
+        # odds_snapshots: add description column for player prop player names
+        snap_cols = {row[1] for row in conn.execute("PRAGMA table_info(odds_snapshots)").fetchall()}
+        if "description" not in snap_cols:
+            conn.execute("ALTER TABLE odds_snapshots ADD COLUMN description TEXT")
+            logger.info("Migration: odds_snapshots.description added")
+
         # Ensure WC cache tables exist (CREATE TABLE IF NOT EXISTS handles new installs;
         # this handles databases created before those tables were added)
         conn.executescript("""
@@ -177,11 +184,11 @@ def upsert_game(game: dict) -> None:
 
 def insert_odds_snapshot(snap: dict) -> None:
     sql = """
-    INSERT INTO odds_snapshots (game_pk, sport, market, book, outcome, price, point)
-    VALUES (:game_pk, :sport, :market, :book, :outcome, :price, :point)
+    INSERT INTO odds_snapshots (game_pk, sport, market, book, outcome, price, point, description)
+    VALUES (:game_pk, :sport, :market, :book, :outcome, :price, :point, :description)
     """
     with get_conn() as conn:
-        conn.execute(sql, snap)
+        conn.execute(sql, {**snap, "description": snap.get("description", "")})
 
 
 def insert_bet_log(bet: dict) -> int:

@@ -204,12 +204,23 @@ def simulate_half_inning(lineup: list[PlayerProfile], pitcher: PlayerProfile,
                           pos: int, park_factors: dict | None = None,
                           weather_adj: dict | None = None,
                           batter_sim_counts: dict | None = None,
-                          pitcher_sim_counts: dict | None = None) -> tuple[int, int]:
-    """Simulate one half-inning. Returns (runs_scored, new_lineup_position)."""
+                          pitcher_sim_counts: dict | None = None,
+                          walk_off_target: int | None = None,
+                          probs_cache: dict | None = None) -> tuple[int, int]:
+    """Simulate one half-inning. Returns (runs_scored, new_lineup_position).
+    walk_off_target: stop as soon as runs >= this value (walk-off prevention).
+    probs_cache: keyed by (batter_id, pitcher_id); avoids recomputing log5 per PA."""
     outs, runs, runners = 0, 0, [0, 0, 0]
     while outs < 3:
-        batter  = lineup[pos % len(lineup)]
-        probs   = compute_pa_probs(batter, pitcher, park_factors, weather_adj)
+        batter = lineup[pos % len(lineup)]
+        if probs_cache is not None:
+            key = (batter.player_id, pitcher.player_id)
+            probs = probs_cache.get(key)
+            if probs is None:
+                probs = compute_pa_probs(batter, pitcher, park_factors, weather_adj)
+                probs_cache[key] = probs
+        else:
+            probs = compute_pa_probs(batter, pitcher, park_factors, weather_adj)
         outcome = _sample_outcome(probs)
         if outcome in ("K", "out"):
             outs += 1
@@ -226,6 +237,8 @@ def simulate_half_inning(lineup: list[PlayerProfile], pitcher: PlayerProfile,
                 _update_pitcher_stats(pitcher_sim_counts, pitcher.player_id, outcome,
                                       runs_allowed=scored)
         pos += 1
+        if walk_off_target is not None and runs >= walk_off_target:
+            break
     return runs, pos % len(lineup)
 
 
@@ -239,12 +252,14 @@ def simulate_game(home_lineup: list[PlayerProfile],
                   home_bullpen: PlayerProfile | None = None,
                   away_bullpen: PlayerProfile | None = None,
                   batter_sim_counts: dict | None = None,
-                  pitcher_sim_counts: dict | None = None) -> dict:
+                  pitcher_sim_counts: dict | None = None,
+                  probs_cache: dict | None = None) -> dict:
     """
     Simulate a full game.
     Innings 1-_STARTER_INNINGS use the starter; remaining innings use the
     bullpen profile (falls back to starter if none supplied).
     batter_sim_counts / pitcher_sim_counts accumulate per-player stats when provided.
+    probs_cache: shared across the whole game to avoid recomputing log5 each PA.
     """
     home_runs, away_runs = 0, 0
     home_pos, away_pos   = 0, 0
@@ -255,13 +270,18 @@ def simulate_game(home_lineup: list[PlayerProfile],
 
         r, away_pos = simulate_half_inning(away_lineup, home_p, away_pos,
                                             park_factors, weather_adj,
-                                            batter_sim_counts, pitcher_sim_counts)
+                                            batter_sim_counts, pitcher_sim_counts,
+                                            probs_cache=probs_cache)
         away_runs += r
         if inning == innings - 1 and home_runs > away_runs:
             break
+        # Bottom of last regulation inning: stop as soon as home takes the lead
+        wot = (away_runs - home_runs + 1) if inning == innings - 1 else None
         r, home_pos = simulate_half_inning(home_lineup, away_p, home_pos,
                                             park_factors, weather_adj,
-                                            batter_sim_counts, pitcher_sim_counts)
+                                            batter_sim_counts, pitcher_sim_counts,
+                                            walk_off_target=wot,
+                                            probs_cache=probs_cache)
         home_runs += r
         if inning == innings - 1 and home_runs > away_runs:
             break
@@ -272,11 +292,16 @@ def simulate_game(home_lineup: list[PlayerProfile],
     while home_runs == away_runs and extra < 6:
         r, away_pos = simulate_half_inning(away_lineup, home_xp, away_pos,
                                             park_factors, weather_adj,
-                                            batter_sim_counts, pitcher_sim_counts)
+                                            batter_sim_counts, pitcher_sim_counts,
+                                            probs_cache=probs_cache)
         away_runs += r
+        # Home can walk off in extra innings too
+        wot_xtra = away_runs - home_runs + 1
         r, home_pos = simulate_half_inning(home_lineup, away_xp, home_pos,
                                             park_factors, weather_adj,
-                                            batter_sim_counts, pitcher_sim_counts)
+                                            batter_sim_counts, pitcher_sim_counts,
+                                            walk_off_target=wot_xtra,
+                                            probs_cache=probs_cache)
         home_runs += r
         extra += 1
 
@@ -327,6 +352,25 @@ def run_monte_carlo(home_lineup: list[PlayerProfile],
         batter_dist: dict[str, dict[str, list]] = {}
         pitcher_dist: dict[str, dict[str, list]] = {}
 
+    # Pre-compute PA probability dicts for every unique (batter, pitcher) pair.
+    # Each game uses at most 4 pitchers (home/away starter + bullpen) × 18 batters
+    # = 36 pairs. Without caching, compute_pa_probs is called ~720k times per game.
+    _hp_eff  = home_pitcher
+    _hbp_eff = home_bullpen or home_pitcher
+    _ap_eff  = away_pitcher
+    _abp_eff = away_bullpen or away_pitcher
+    probs_cache: dict[tuple[str, str], dict[str, float]] = {}
+    for batter in away_lineup:
+        for pitcher in (_hp_eff, _hbp_eff):
+            key = (batter.player_id, pitcher.player_id)
+            if key not in probs_cache:
+                probs_cache[key] = compute_pa_probs(batter, pitcher, park_factors, weather_adj)
+    for batter in home_lineup:
+        for pitcher in (_ap_eff, _abp_eff):
+            key = (batter.player_id, pitcher.player_id)
+            if key not in probs_cache:
+                probs_cache[key] = compute_pa_probs(batter, pitcher, park_factors, weather_adj)
+
     for _ in range(n_sims):
         b_counts: dict | None = {} if track_props else None
         p_counts: dict | None = {} if track_props else None
@@ -339,6 +383,7 @@ def run_monte_carlo(home_lineup: list[PlayerProfile],
             away_bullpen=away_bullpen,
             batter_sim_counts=b_counts,
             pitcher_sim_counts=p_counts,
+            probs_cache=probs_cache,
         )
         if result["winner"] == "home":
             home_wins += 1
