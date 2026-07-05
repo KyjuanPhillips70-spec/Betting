@@ -56,8 +56,6 @@ def get_schedule(game_date: date | None = None) -> list[dict]:
         for g in date_block.get("games", []):
             venue_loc = g.get("venue", {}).get("location", {}).get("defaultCoordinates", {})
 
-            # Extract confirmed lineup player IDs when the lineup is already posted
-            # (typically 2-3 hours before first pitch). Empty list when not yet available.
             lineups_raw = g.get("lineups", {})
             home_lineup_ids = [
                 p["id"] for p in lineups_raw.get("homePlayers", []) if p.get("id")
@@ -97,6 +95,23 @@ def get_player_stats(person_id: int, group: str = "hitting",
     return splits[0].get("stat", {}) if splits else {}
 
 
+def get_batter_vs_pitcher(batter_id: int, pitcher_id: int,
+                           season: int = CURRENT_SEASON) -> dict:
+    """
+    Historical stats for batter_id against pitcher_id this season.
+    Returns raw stat dict (plateAppearances, hits, homeRuns, etc.) or {} if
+    there is no matchup data. Callers should check plateAppearances before using.
+    """
+    data = _get(f"/v1/people/{batter_id}/stats", {
+        "stats":            "vsPlayer",
+        "opposingPlayerId": pitcher_id,
+        "group":            "hitting",
+        "season":           season,
+    })
+    splits = _first_splits(data)
+    return splits[0].get("stat", {}) if splits else {}
+
+
 def get_pitcher_hand(person_id: int) -> str:
     """
     Fetch pitcher's throwing hand from the MLB Stats API.
@@ -115,10 +130,6 @@ def get_players_batting_stats(player_ids: list[int],
     Batch-fetch season batting stats for a confirmed lineup in ONE API call.
     Returns list of {player_id, name, bat_side, stats} in the same order as
     player_ids. Entries with no stats data have an empty stats dict.
-
-    This replaces the old 9-identical-batter approach: each slot now has the
-    real batter's K%, BB%, HR%, hit rates so the log5 matchup calculation
-    reflects actual offensive tendencies.
     """
     if not player_ids:
         return []
@@ -127,7 +138,6 @@ def get_players_batting_stats(player_ids: list[int],
         "personIds": ids_str,
         "hydrate": f"stats(group=[hitting],type=[season],season={season}),batSide",
     })
-    # Build a lookup by player ID so we can return results in batting-order
     by_id: dict[int, dict] = {}
     for person in data.get("people", []):
         pid = person.get("id")
@@ -197,11 +207,6 @@ def assemble_pregame_bundle(game_date: date | None = None) -> list[dict]:
     """
     Full pre-game data bundle for every pre-game scheduled game on a date.
     Skips games that are already Live or Final to avoid wasted API calls.
-    Fetches (in order):
-      - Probable pitcher season stats + splits + throwing hand
-      - Team batting aggregate (fallback lineup)
-      - Team pitching aggregate (bullpen proxy)
-      - Per-player batting stats when confirmed lineup is available (batch call)
     """
     games = get_schedule(game_date)
     logger.info("Found {} MLB games for {}", len(games), game_date or date.today())
@@ -227,7 +232,6 @@ def assemble_pregame_bundle(game_date: date | None = None) -> list[dict]:
                 game[f"{side}_team_pitching"] = get_team_pitching_stats(tid)
                 time.sleep(0.10)
 
-            # Per-player lineup stats when the lineup has been officially posted
             lineup_ids = game.get(f"{side}_lineup_ids", [])
             if lineup_ids:
                 game[f"{side}_lineup_stats"] = get_players_batting_stats(lineup_ids)

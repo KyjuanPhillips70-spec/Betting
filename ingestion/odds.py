@@ -75,7 +75,8 @@ def get_event_odds(sport: str, event_id: str, markets: str,
 def parse_odds_to_snapshots(events: list[dict], sport: str) -> list[dict]:
     """
     Flatten an odds-API response into snapshot dicts ready for storage.
-    Each dict: game_pk, sport, market, book, outcome, price (American), point.
+    Each dict: game_pk, sport, market, book, outcome, description, price, point.
+    The description field carries the player name for prop markets.
     """
     snapshots: list[dict] = []
     for event in events:
@@ -86,12 +87,13 @@ def parse_odds_to_snapshots(events: list[dict], sport: str) -> list[dict]:
                 market_key = market.get("key", "")
                 for outcome in market.get("outcomes", []):
                     snapshots.append({
-                        "game_pk": game_pk,
-                        "sport":   sport,
-                        "market":  market_key,
-                        "book":    book,
-                        "outcome": outcome.get("name", ""),
-                        "price":   outcome.get("price"),
-                        "point":   outcome.get("point"),
+                        "game_pk":     game_pk,
+                        "sport":       sport,
+                        "market":      market_key,
+                        "book":        book,
+                        "outcome":     outcome.get("name", ""),
+                        "description": outcome.get("description", ""),
+                        "price":       outcome.get("price"),
+                        "point":       outcome.get("point"),
                     })
     return snapshots
