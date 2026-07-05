@@ -37,14 +37,14 @@ jobs:
           workflow: daily_card.yml
 
       - name: Generate dashboard
-        run: python generate_dashboard.py --db betting_bot.db --out dashboard.html
+        run: |
+          mkdir -p site
+          python generate_dashboard.py --db betting_bot.db --out site/index.html
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: .
+          publish_dir: site
           publish_branch: gh-pages
-          include_files: dashboard.html
-          force_orphan: false
           commit_message: "chore: update dashboard [skip ci]"
