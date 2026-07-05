@@ -10,7 +10,7 @@ on:
 jobs:
   daily-card:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -37,8 +37,8 @@ jobs:
       - name: Initialize / migrate database
         run: python main.py --init-db
 
-      - name: Run daily card
-        run: python main.py --sport mlb --sims 5000
+      - name: Run daily card (MLB + Soccer)
+        run: python main.py --sport all --sims 5000
         env:
           MIN_EDGE_THRESHOLD: ${{ vars.MIN_EDGE_THRESHOLD || '0.03' }}
           MAX_KELLY_FRACTION: ${{ vars.MAX_KELLY_FRACTION || '0.20' }}
