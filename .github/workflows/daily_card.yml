@@ -2,10 +2,10 @@ name: +EV Daily Card
 
 on:
   schedule:
-    - cron: '0 13 * * *'   # 9:00 AM ET
+    - cron: '0 13 * * *'   # 9:00 AM ET (UTC-4)
     - cron: '0 17 * * *'   # 1:00 PM ET
     - cron: '0 22 * * *'   # 6:00 PM ET
-  workflow_dispatch:         # manual trigger from Actions tab
+  workflow_dispatch:         # lets you trigger manually from the Actions tab
 
 jobs:
   daily-card:
@@ -13,7 +13,7 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      - name: Checkout bot code
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           ref: claude/ev-sports-betting-bot-e1eaf1
@@ -27,8 +27,31 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Initialize database
+      - name: Download persisted database
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          name: betting-db
+          path: .
+          if_no_artifact_found: ignore
+
+      - name: Initialize / migrate database
         run: python main.py --init-db
 
       - name: Run daily card (MLB + Soccer)
         run: python main.py --sport all --sims 5000
+        env:
+          MIN_EDGE_THRESHOLD: ${{ vars.MIN_EDGE_THRESHOLD || '0.03' }}
+          MAX_KELLY_FRACTION: ${{ vars.MAX_KELLY_FRACTION || '0.20' }}
+          MODEL_WEIGHT: ${{ vars.MODEL_WEIGHT || '0.40' }}
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+      - name: Upload database artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: betting-db
+          path: betting_bot.db
+          retention-days: 90
+          overwrite: true

@@ -1,0 +1,50 @@
+name: Deploy Dashboard to GitHub Pages
+
+on:
+  workflow_run:
+    workflows: ["+EV Daily Card"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: claude/ev-sports-betting-bot-e1eaf1
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Download persisted database
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          name: betting-db
+          path: .
+          if_no_artifact_found: ignore
+          workflow: daily_card.yml
+
+      - name: Generate dashboard
+        run: |
+          mkdir -p site
+          python generate_dashboard.py --db betting_bot.db --out site/index.html
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: site
+          publish_branch: gh-pages
+          commit_message: "chore: update dashboard [skip ci]"
