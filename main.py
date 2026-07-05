@@ -25,16 +25,18 @@ load_dotenv()
 from storage.database import (
     init_db, upsert_game, insert_bet_log, insert_odds_snapshot,
 )
-from ingestion.mlb_statsapi import assemble_pregame_bundle
+from ingestion.mlb_statsapi import (
+    assemble_pregame_bundle, get_batter_vs_pitcher,
+)
 from ingestion.weather import get_game_weather
-from ingestion.odds import get_odds, parse_odds_to_snapshots
+from ingestion.odds import get_odds, get_event_odds, parse_odds_to_snapshots
 from models.mlb_sim import (
     run_monte_carlo, build_dummy_lineup, PlayerProfile, LEAGUE_RATES
 )
 from models.weather_adj import get_weather_adjustments
 from config.park_factors import get_park_factors, park_factors_to_pa_adjustments
 from config.stadiums import get_stadium
-from edge.edge import find_mlb_edges
+from edge.edge import find_mlb_edges, find_player_prop_edges
 from alerting.telegram_alerts import TelegramAlerter, BetAlert
 
 
@@ -209,6 +211,27 @@ def _ratings_from_wc_results(
     return attack, defense, league_avg
 
 
+def _blend_matchup_rates(base_rates: dict, matchup_stats: dict,
+                          pa_threshold: int = 15) -> dict:
+    """
+    Blend a batter's season rates with historical batter-vs-pitcher data.
+    Weight = min(PA / 60, 0.70) x 0.50 — max 35% at 60+ PA.
+    Falls back to base_rates when the matchup sample is below pa_threshold.
+    """
+    pa = matchup_stats.get("plateAppearances", 0) or 0
+    if pa < pa_threshold:
+        return base_rates
+    weight = min(pa / 60.0, 0.70) * 0.50
+    matchup_rates = _team_batting_to_rates(matchup_stats)
+    blended = {
+        k: (1 - weight) * base_rates.get(k, LEAGUE_RATES[k])
+           + weight * matchup_rates.get(k, base_rates.get(k, LEAGUE_RATES[k]))
+        for k in LEAGUE_RATES
+    }
+    total = sum(blended.values())
+    return {k: v / total for k, v in blended.items()} if total > 0 else base_rates
+
+
 # ---------------------------------------------------------------------------
 # Profile builders
 # ---------------------------------------------------------------------------
@@ -227,7 +250,6 @@ def _build_lineup_profiles(
     """
     Build a 9-slot lineup from confirmed per-player batting stats.
     Slots with insufficient data (< 50 PA) fall back to the team aggregate.
-    Caller is responsible for ensuring len(lineup_stats) >= 7 before calling.
     """
     profiles: list[PlayerProfile] = []
     for i, player in enumerate(lineup_stats[:9]):
@@ -238,7 +260,6 @@ def _build_lineup_profiles(
             player.get("bat_side", "R"),
             rates,
         ))
-    # Pad remaining slots with team aggregate if lineup is short
     while len(profiles) < 9:
         i = len(profiles)
         profiles.append(PlayerProfile(
@@ -295,7 +316,6 @@ def run_mlb(game_date: date | None = None, n_sims: int = 10_000) -> list[BetAler
     all_alerts: list[BetAlert] = []
 
     for game in games:
-        # Skip games that were already live/final when schedule was fetched
         if not game.get("home_team") or not game.get("away_team"):
             continue
 
@@ -360,7 +380,7 @@ def run_mlb(game_date: date | None = None, n_sims: int = 10_000) -> list[BetAler
                 for i in range(9)
             ]
 
-        # Starter profiles with real pitch hand from Stats API (not hardcoded 'R')
+        # Starter profiles with real pitch hand from Stats API
         home_pitcher = _build_pitcher_profile(
             game.get("home_pitcher_id"), game.get("home_pitcher"),
             game.get("home_pitcher_hand", "R"), game.get("home_pitcher_stats", {})
@@ -380,6 +400,29 @@ def run_mlb(game_date: date | None = None, n_sims: int = 10_000) -> list[BetAler
             "R", game.get("away_team_pitching", {})
         )
 
+        # Blend each batter's season rates with batter-vs-opposing-starter history.
+        # Only confirmed lineups have integer player IDs; aggregate slots are skipped.
+        away_starter_id = game.get("away_pitcher_id")
+        home_starter_id = game.get("home_pitcher_id")
+        if away_starter_id:
+            for profile in home_lineup:
+                if profile.player_id.isdigit():
+                    try:
+                        matchup = get_batter_vs_pitcher(
+                            int(profile.player_id), away_starter_id)
+                        profile.rates = _blend_matchup_rates(profile.rates, matchup)
+                    except Exception:
+                        pass
+        if home_starter_id:
+            for profile in away_lineup:
+                if profile.player_id.isdigit():
+                    try:
+                        matchup = get_batter_vs_pitcher(
+                            int(profile.player_id), home_starter_id)
+                        profile.rates = _blend_matchup_rates(profile.rates, matchup)
+                    except Exception:
+                        pass
+
         try:
             sim = run_monte_carlo(
                 home_lineup, away_lineup,
@@ -388,6 +431,7 @@ def run_mlb(game_date: date | None = None, n_sims: int = 10_000) -> list[BetAler
                 n_sims,
                 home_bullpen=home_bullpen,
                 away_bullpen=away_bullpen,
+                track_props=True,
             )
             logger.info("Sim: home_win={:.1%} mean_total={:.2f}",
                         sim["home_win_prob"], sim["mean_total"])
@@ -429,6 +473,42 @@ def run_mlb(game_date: date | None = None, n_sims: int = 10_000) -> list[BetAler
             })
         all_alerts.extend(alerts)
 
+        # Player prop edges
+        if eid and sim.get("prop_distributions"):
+            try:
+                prop_event = get_event_odds("mlb", eid, markets=(
+                    "batter_hits,batter_total_bases,batter_home_runs,"
+                    "batter_rbis,batter_walks,pitcher_strikeouts,pitcher_outs"
+                ))
+                if prop_event:
+                    prop_snaps  = parse_odds_to_snapshots([prop_event], "MLB")
+                    prop_alerts = find_player_prop_edges(game, sim, prop_snaps)
+                    for a in prop_alerts:
+                        a.projected_score = proj
+                    for a in prop_alerts:
+                        insert_bet_log({
+                            "sport":           a.sport,
+                            "event":           a.event,
+                            "market":          a.market,
+                            "book":            a.book,
+                            "line":            a.line,
+                            "model_prob":      a.model_prob,
+                            "fair_prob":       a.fair_prob,
+                            "edge":            a.edge,
+                            "stake_units":     a.stake_units,
+                            "ev":              a.edge,
+                            "projected_score": proj,
+                        })
+                    all_alerts.extend(prop_alerts)
+                    if prop_alerts:
+                        logger.info("Props: {} edge(s) for {} @ {}",
+                                    len(prop_alerts),
+                                    game["away_team"], game["home_team"])
+            except Exception as e:
+                logger.warning("Prop pipeline failed for {} @ {}: {}",
+                               game.get("away_team", "?"),
+                               game.get("home_team", "?"), e)
+
     return all_alerts
 
 
@@ -447,10 +527,8 @@ def run_soccer(game_date: date | None = None) -> list[BetAlert]:
     LEAGUES  = ["world_cup"]
     HOME_ADV = 1.0
 
-    # Fetch scoring leaders once; used for per-fixture context logging
     try:
         scoring_leaders = get_wc_scoring_leaders()
-        # Build quick lookup: team -> top 3 scorers
         leaders_by_team: dict[str, list[str]] = defaultdict(list)
         for entry in scoring_leaders:
             t = entry["team"]
@@ -462,20 +540,12 @@ def run_soccer(game_date: date | None = None) -> list[BetAlert]:
     all_alerts: list[BetAlert] = []
 
     for league in LEAGUES:
-        # Include BTTS market for soccer (The Odds API supports market key "btts")
         odds_events = get_odds(league, markets="h2h,totals,btts")
         if not odds_events:
             logger.info("No {} odds events today.", league.upper())
             continue
         logger.info("{}: {} fixture(s) with odds", league.upper(), len(odds_events))
 
-        # ---------------------------------------------------------------------------
-        # Ratings: World Cup always uses Bayesian-blended ratings from match results.
-        # Raw ESPN standings from 3 group-stage games are too noisy to use directly;
-        # _ratings_from_wc_results() blends actual data against pre-tournament priors
-        # using w = n / (n + 8) weighting, which is far more stable at small n.
-        # For non-WC leagues, fall back to ESPN standings.
-        # ---------------------------------------------------------------------------
         attack:  dict[str, float] = {}
         defense: dict[str, float] = {}
         league_avg: float = _INTL_AVG
@@ -530,7 +600,6 @@ def run_soccer(game_date: date | None = None) -> list[BetAlert]:
             lam_h = attack.get(home, 1.0) * defense.get(away, 1.0) * league_avg * HOME_ADV
             lam_a = attack.get(away, 1.0) * defense.get(home, 1.0) * league_avg
 
-            # Log top scorers per team as a cross-check signal
             h_stars = ", ".join(leaders_by_team.get(home_raw, [])) or "n/a"
             a_stars = ", ".join(leaders_by_team.get(away_raw, [])) or "n/a"
             logger.info("  {}: top scorers {} | {}: top scorers {}",
