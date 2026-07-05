@@ -27,8 +27,31 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Initialize database
+      - name: Download persisted database
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          name: betting-db
+          path: .
+          if_no_artifact_found: ignore
+
+      - name: Initialize / migrate database
         run: python main.py --init-db
 
       - name: Run daily card
         run: python main.py --sport mlb --sims 5000
+        env:
+          MIN_EDGE_THRESHOLD: ${{ vars.MIN_EDGE_THRESHOLD || '0.03' }}
+          MAX_KELLY_FRACTION: ${{ vars.MAX_KELLY_FRACTION || '0.20' }}
+          MODEL_WEIGHT: ${{ vars.MODEL_WEIGHT || '0.40' }}
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+      - name: Upload database artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: betting-db
+          path: betting_bot.db
+          retention-days: 90
+          overwrite: true
