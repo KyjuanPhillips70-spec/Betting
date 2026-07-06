@@ -153,28 +153,61 @@ def fetch_player_seasons(prop_bets, season=2025):
     return seen
 
 
+_PITCHER_POS = {"P", "SP", "RP", "LRP", "MRP", "SU", "CL"}
+
+
 def fetch_all_player_stats(season=2025):
-    """Bulk fetch all active MLB players: batters (PA≥30) and pitchers (IP≥5)."""
+    """Fetch every MLB player who appeared this season, then overlay season stats."""
     result = {}
-    # Batters
+
+    # Step 1 — full player roster for the season (one call, ~800-1000 players)
+    data = _mlb_get("/sports/1/players", {"season": season, "gameType": "R"})
+    for p in (data.get("people") or []):
+        pid = p.get("id")
+        if not pid:
+            continue
+        pos_abbr = (p.get("primaryPosition") or {}).get("abbreviation", "")
+        is_pitcher = pos_abbr in _PITCHER_POS
+        team = (p.get("currentTeam") or {}).get("abbreviation", "")
+        result[str(pid)] = {
+            "pid": pid, "name": p.get("fullName", ""),
+            "team": team, "pos": "P" if is_pitcher else "B", "posDetail": pos_abbr,
+            "g": 0, "pa": 0, "homeRuns": 0, "k": 0,
+            "avg": "---", "ops": "---",
+            "ip": "0.0", "pK": 0, "era": "---", "whip": "---",
+        }
+
+    def _upsert(pid_str, name, team, pos, posDetail=""):
+        if pid_str not in result:
+            result[pid_str] = {
+                "pid": int(pid_str), "name": name, "team": team,
+                "pos": pos, "posDetail": posDetail,
+                "g": 0, "pa": 0, "homeRuns": 0, "k": 0,
+                "avg": "---", "ops": "---",
+                "ip": "0.0", "pK": 0, "era": "---", "whip": "---",
+            }
+
+    # Step 2 — overlay batter season stats
     data = _mlb_get("/stats", {"stats": "season", "group": "hitting",
                                 "season": season, "sportId": 1, "limit": 1000, "gameType": "R"})
     for blk in (data.get("stats") or []):
         for sp in (blk.get("splits") or []):
             p = sp.get("player", {}); s = sp.get("stat", {}); t = (sp.get("team") or {})
             pid = p.get("id")
-            if not pid or s.get("plateAppearances", 0) < 30:
+            if not pid:
                 continue
-            result[str(pid)] = {
-                "pid": pid, "name": p.get("fullName", ""),
-                "team": t.get("abbreviation", ""), "pos": "B",
+            pid_str = str(pid)
+            _upsert(pid_str, p.get("fullName", ""), t.get("abbreviation", ""), "B")
+            result[pid_str].update({
+                "team": t.get("abbreviation", "") or result[pid_str]["team"],
                 "g": s.get("gamesPlayed", 0), "pa": s.get("plateAppearances", 0),
                 "hits": s.get("hits", 0), "totalBases": s.get("totalBases", 0),
                 "homeRuns": s.get("homeRuns", 0), "rbi": s.get("rbi", 0),
                 "bb": s.get("baseOnBalls", 0), "k": s.get("strikeOuts", 0),
                 "avg": s.get("avg", "---"), "ops": s.get("ops", "---"),
-            }
-    # Pitchers
+            })
+
+    # Step 3 — overlay pitcher season stats
     data = _mlb_get("/stats", {"stats": "season", "group": "pitching",
                                 "season": season, "sportId": 1, "limit": 1000, "gameType": "R"})
     for blk in (data.get("stats") or []):
@@ -183,23 +216,46 @@ def fetch_all_player_stats(season=2025):
             pid = p.get("id")
             if not pid:
                 continue
-            try:
-                ip = float(s.get("inningsPitched") or 0)
-            except (ValueError, TypeError):
-                ip = 0.0
-            if ip < 5:
-                continue
             pid_str = str(pid)
-            if pid_str not in result:
-                result[pid_str] = {
-                    "pid": pid, "name": p.get("fullName", ""),
-                    "team": t.get("abbreviation", ""), "pos": "P",
-                    "g": s.get("gamesPlayed", 0), "ip": s.get("inningsPitched", "0.0"),
+            _upsert(pid_str, p.get("fullName", ""), t.get("abbreviation", ""), "P", "P")
+            if result[pid_str]["pos"] == "P":
+                result[pid_str].update({
+                    "team": t.get("abbreviation", "") or result[pid_str]["team"],
+                    "g": s.get("gamesPlayed", result[pid_str]["g"]),
+                    "ip": s.get("inningsPitched", "0.0"),
                     "pK": s.get("strikeOuts", 0), "pH": s.get("hits", 0),
                     "pBB": s.get("baseOnBalls", 0), "pER": s.get("earnedRuns", 0),
                     "era": s.get("era", "---"), "whip": s.get("whip", "---"),
-                }
+                })
+
     return result
+
+
+def fetch_todays_lineups(today_str):
+    """Return player IDs confirmed in today's lineups + probable pitchers."""
+    data = _mlb_get("/schedule", {
+        "sportId": 1, "date": today_str,
+        "hydrate": "lineups,probablePitchers,team",
+        "gameType": "R",
+    })
+    player_ids = []
+    games = []
+    for date_entry in (data.get("dates") or []):
+        for game in (date_entry.get("games") or []):
+            teams = game.get("teams") or {}
+            home = teams.get("home", {}); away = teams.get("away", {})
+            home_team = (home.get("team") or {}).get("abbreviation", "")
+            away_team = (away.get("team") or {}).get("abbreviation", "")
+            lineup = game.get("lineups") or {}
+            for pl in (lineup.get("homePlayers") or []) + (lineup.get("awayPlayers") or []):
+                if pl.get("id"):
+                    player_ids.append(pl["id"])
+            for side in (home, away):
+                pp = (side.get("probablePitcher") or {})
+                if pp.get("id"):
+                    player_ids.append(pp["id"])
+            games.append({"home": home_team, "away": away_team})
+    return {"player_ids": list(set(player_ids)), "games": games}
 
 
 def read_db(db_path: str) -> dict:
@@ -336,6 +392,13 @@ def read_db(db_path: str) -> dict:
         print(f"Warning: bulk player stats fetch failed: {exc}")
         all_player_stats = {}
 
+    # Fetch today's confirmed lineups + probable pitchers
+    try:
+        today_lineups = fetch_todays_lineups(today_str)
+    except Exception as exc:
+        print(f"Warning: today's lineups fetch failed: {exc}")
+        today_lineups = {"player_ids": [], "games": []}
+
     return {
         "generated_at":   datetime.now().strftime("%Y-%m-%d %H:%M:%S ET"),
         "today":          today_str,
@@ -347,6 +410,7 @@ def read_db(db_path: str) -> dict:
         "prop_bets":      prop_bets,
         "player_seasons": player_seasons,
         "all_player_stats": all_player_stats,
+        "today_lineups":  today_lineups,
         "stats": {
             "total_picks":    len(bets),
             "n_resolved":     n_resolved,
@@ -726,6 +790,8 @@ footer{
 .detail-loading{display:flex;align-items:center;justify-content:center;height:120px;color:var(--tm);font-size:.82rem;gap:.5rem}
 .detail-spinner{width:16px;height:16px;border:2px solid var(--border2);border-top-color:var(--mlb);border-radius:50%;animation:spin .6s linear infinite;flex-shrink:0}
 @keyframes spin{to{transform:rotate(360deg)}}
+/* Today's lineup badge */
+.today-badge{display:inline-flex;align-items:center;padding:.1rem .38rem;border-radius:3px;font-size:.58rem;font-weight:800;background:rgba(200,128,15,.18);color:var(--amber);border:1px solid rgba(200,128,15,.35);font-family:'Consolas','Menlo',monospace;margin-left:.35rem;letter-spacing:.04em;text-transform:uppercase}
 
 /* ── Mobile (≤540px — iPhone 13 and similar) ── */
 @media(max-width:540px){
@@ -1111,17 +1177,18 @@ propList.forEach((pd, idx) => {
   propsByPlayer[pd.player].push(idx);
 });
 
-// Combined roster: bet-tracked props first, then all active MLB players not already tracked
+// Combined roster: bet-tracked props first, today's lineup players, then rest A-Z
+const todayPids = new Set((D.today_lineups?.player_ids || []).map(String));
 const masterDisplayList = [];
 propList.forEach((pd, i) => masterDisplayList.push({type:'bet', propIdx:i, player:pd.player}));
 const _trackedNames = new Set(propList.map(pd => pd.player.toLowerCase()));
-Object.values(D.all_player_stats || {})
-  .sort((a,b) => a.name.localeCompare(b.name))
-  .forEach(ps => {
-    if (!_trackedNames.has(ps.name.toLowerCase())) {
-      masterDisplayList.push(Object.assign({type:'stats'}, ps));
-    }
-  });
+const _allRosterPlayers = Object.values(D.all_player_stats || {})
+  .filter(ps => !_trackedNames.has(ps.name.toLowerCase()))
+  .map(ps => Object.assign({type:'stats', player:ps.name, isToday: todayPids.has(String(ps.pid))}, ps));
+const _todayRoster = _allRosterPlayers.filter(e => e.isToday).sort((a,b) => a.name.localeCompare(b.name));
+const _restRoster  = _allRosterPlayers.filter(e => !e.isToday).sort((a,b) => a.name.localeCompare(b.name));
+_todayRoster.forEach(e => masterDisplayList.push(e));
+_restRoster.forEach(e => masterDisplayList.push(e));
 
 let propStatFilter = 'all';
 let propTf = 'L10';
@@ -1287,20 +1354,22 @@ function renderPropList() {
       </button>`;
     } else {
       const isPitcher = entry.pos === 'P';
+      const posLabel = entry.posDetail || (isPitcher ? 'P' : 'B');
       const keyStats = isPitcher
         ? `ERA ${entry.era||'---'} · ${entry.pK||0}K · WHIP ${entry.whip||'---'}`
         : `AVG ${entry.avg||'---'} · ${entry.homeRuns||0}HR · ${entry.k||0}K`;
       const vol = isPitcher ? `${entry.g||0}G · ${entry.ip||'0'}IP` : `${entry.g||0}G · ${entry.pa||0}PA`;
+      const todayBadge = entry.isToday ? `<span class="today-badge">TODAY ⚡</span>` : '';
       return `<button class="prop-row" onclick="openDetailMaster(${midx})">
         <div class="prop-row-left">
-          <div class="prop-row-name">${entry.player}<span class="stats-row-team">${entry.team||''} ${isPitcher?'P':'B'}</span></div>
+          <div class="prop-row-name">${entry.player}${todayBadge}<span class="stats-row-team">${entry.team||''} · ${posLabel}</span></div>
           <div class="prop-row-desc">
             <span style="font-family:'Consolas','Menlo',monospace;font-size:.7rem">${keyStats}</span>
             <span class="prop-row-odds">${vol}</span>
           </div>
         </div>
         <div class="prop-row-mid">
-          <div style="font-size:.58rem;font-weight:800;color:var(--mlb);letter-spacing:.06em;text-transform:uppercase">Roster</div>
+          <div style="font-size:.58rem;font-weight:800;color:${entry.isToday?'var(--amber)':'var(--mlb)'};letter-spacing:.06em;text-transform:uppercase">${entry.isToday?'Playing Today':'Roster'}</div>
         </div>
         <div class="prop-row-right">
           <div class="prop-row-hit" style="color:var(--tm)">—</div>
@@ -1723,6 +1792,7 @@ def generate(db_path: str, out_path: str) -> None:
             "today": date.today().isoformat(),
             "today_picks": [], "recent_bets": [], "daily_pnl": [],
             "top_markets": [], "sports": [], "prop_bets": [], "player_seasons": {}, "all_player_stats": {},
+            "today_lineups": {"player_ids": [], "games": []},
             "stats": {"total_picks":0,"n_resolved":0,"n_wins":0,"win_rate":0,
                       "roi":0,"total_profit":0,"avg_edge":0,"avg_clv":None},
         }
