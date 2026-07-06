@@ -765,9 +765,6 @@ document.querySelectorAll('.tab').forEach(tab => {
       perfInited = true;
       initPerfCharts();
     }
-    if (tab.dataset.tab === 'props' && propChart) {
-      setTimeout(() => propChart.resize(), 10);
-    }
   });
 });
 
