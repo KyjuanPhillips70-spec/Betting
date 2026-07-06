@@ -245,59 +245,79 @@ header{
   font-variant-numeric:tabular-nums;
 }
 
-/* ── Pick cards ── */
-.picks-grid{
-  display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));
-  gap:.75rem;margin-bottom:.5rem;
-}
-.pick-card{
-  background:var(--surf);border:1px solid var(--border);
-  border-radius:var(--r-lg);padding:1rem 1.1rem;
-  position:relative;overflow:hidden;
-  display:flex;flex-direction:column;gap:.55rem;
-  transition:border-color .15s;
-}
-.pick-card:hover{border-color:var(--border2)}
-.pick-card::before{
-  content:'';position:absolute;top:0;left:0;width:3px;height:100%;
-  background:var(--card-accent,var(--mlb));
-  border-radius:var(--r-lg) 0 0 var(--r-lg);
-}
-.pick-card.soccer{--card-accent:var(--soccer)}
-
-.pick-top{display:flex;justify-content:space-between;align-items:flex-start}
-.pick-sport-chip{
-  display:inline-flex;align-items:center;
+/* ── Sport chip (shared) ── */
+.sport-chip{
+  display:inline-flex;align-items:center;flex-shrink:0;
   font-size:.58rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;
   padding:.15rem .5rem;border-radius:4px;
   background:rgba(90,122,232,.1);color:var(--mlb);
   border:1px solid rgba(90,122,232,.18);
 }
-.pick-card.soccer .pick-sport-chip{
+.sport-chip.soccer{
   background:rgba(24,168,138,.1);color:var(--soccer);
   border-color:rgba(24,168,138,.18);
 }
-.pick-edge-hero{
-  font-size:1.4rem;font-weight:800;color:var(--win);line-height:1;
-  font-family:'Consolas','Menlo',monospace;letter-spacing:-.02em;text-align:right;
-}
-.pick-edge-label{font-size:.56rem;text-transform:uppercase;letter-spacing:.08em;color:var(--tm);text-align:right;margin-top:1px}
 
-.pick-event{font-size:.88rem;font-weight:600;color:var(--t1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.pick-market{font-size:.76rem;color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* ── Game accordion ── */
+.game-list{display:flex;flex-direction:column;gap:.5rem;margin-bottom:.5rem}
 
-.pick-bottom{
-  display:flex;justify-content:space-between;align-items:center;
-  border-top:1px solid var(--border);padding-top:.55rem;margin-top:.1rem;
+.game-group{
+  background:var(--surf);border:1px solid var(--border);
+  border-radius:var(--r-lg);overflow:hidden;
 }
-.pick-odds-wrap{display:flex;align-items:baseline;gap:.4rem}
-.pick-line{
-  font-size:1.05rem;font-weight:700;color:var(--odds);
-  font-family:'Consolas','Menlo',monospace;font-variant-numeric:tabular-nums;
+
+.game-hdr{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:.85rem 1.1rem;cursor:pointer;user-select:none;
+  transition:background .1s;gap:1rem;
 }
-.pick-book{font-size:.65rem;color:var(--tm);text-transform:uppercase;letter-spacing:.05em}
-.pick-stake{font-size:.7rem;color:var(--t2);font-family:'Consolas','Menlo',monospace}
-.pick-proj{font-size:.65rem;color:var(--tm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.game-hdr:hover{background:rgba(255,255,255,.025)}
+
+.game-hdr-left{display:flex;align-items:center;gap:.65rem;min-width:0}
+.game-title{
+  font-size:.9rem;font-weight:600;color:var(--t1);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.game-hdr-right{display:flex;align-items:center;gap:.75rem;flex-shrink:0}
+.game-count{font-size:.68rem;color:var(--t2);font-variant-numeric:tabular-nums}
+.game-chevron{
+  color:var(--tm);font-size:.7rem;
+  transition:transform .2s ease;display:inline-block;
+}
+.game-group.open .game-chevron{transform:rotate(180deg)}
+
+.game-body{
+  display:grid;grid-template-rows:0fr;
+  transition:grid-template-rows .2s ease;
+}
+.game-group.open .game-body{grid-template-rows:1fr}
+.game-body-inner{
+  overflow:hidden;
+  border-top:0 solid var(--border);
+  transition:border-top-width 0s .2s, padding .2s ease;
+  padding:0 1.1rem;
+  display:flex;flex-direction:column;gap:.5rem;
+}
+.game-group.open .game-body-inner{
+  border-top-width:1px;padding:.75rem 1.1rem 1rem;
+  transition:padding .2s ease;
+}
+
+/* ── Pick rows inside accordion ── */
+.pick-row{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:.6rem .8rem;background:var(--surf2);
+  border-radius:var(--r);gap:1rem;
+}
+.pick-row-left{min-width:0;flex:1}
+.pick-row-market{font-size:.83rem;font-weight:600;color:var(--t1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pick-row-proj{font-size:.64rem;color:var(--tm);margin-top:.2rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pick-row-right{display:flex;align-items:center;gap:1rem;flex-shrink:0}
+.pick-row-edge{font-size:1.05rem;font-weight:800;color:var(--win);font-family:'Consolas','Menlo',monospace;letter-spacing:-.01em}
+.pick-row-line{font-size:.95rem;font-weight:700;color:var(--odds);font-family:'Consolas','Menlo',monospace;font-variant-numeric:tabular-nums}
+.pick-row-meta{text-align:right}
+.pick-row-book{font-size:.6rem;color:var(--tm);text-transform:uppercase;letter-spacing:.05em}
+.pick-row-stake{font-size:.68rem;color:var(--t2);font-family:'Consolas','Menlo',monospace}
 
 .no-picks{
   background:var(--surf);border:1px solid var(--border);
@@ -486,25 +506,49 @@ const pc = document.getElementById('picks-container');
 if (!picks.length) {
   pc.innerHTML = '<div class="no-picks">No picks logged for today yet — check back after the next run.</div>';
 } else {
-  pc.innerHTML = '<div class="picks-grid">'+picks.map(p=>{
-    const isSoccer=(p.sport||'').toLowerCase()==='soccer';
-    const edge=((p.edge||0)*100).toFixed(1);
-    const stake=(p.stake_units||0).toFixed(2);
-    const proj=p.projected_score?`<div class="pick-proj">${p.projected_score}</div>`:'';
-    return `<div class="pick-card ${isSoccer?'soccer':''}">
-      <div class="pick-top">
-        <span class="pick-sport-chip">${p.sport||'?'}</span>
-        <div><div class="pick-edge-hero">+${edge}%</div><div class="pick-edge-label">edge</div></div>
-      </div>
-      <div class="pick-event" title="${p.event||''}">${p.event||'?'}</div>
-      <div class="pick-market" title="${p.market||''}">${p.market||'?'}</div>
-      <div class="pick-bottom">
-        <div class="pick-odds-wrap">
-          <span class="pick-line mono">${p.line||'?'}</span>
-          <span class="pick-book">${p.book||'?'}</span>
+  // Group picks by game event, sort groups by best edge desc
+  const byGame={};
+  picks.forEach(p=>{
+    const ev=p.event||'?';
+    if(!byGame[ev])byGame[ev]={sport:p.sport,picks:[]};
+    byGame[ev].picks.push(p);
+  });
+  const gameList=Object.entries(byGame).sort((a,b)=>
+    Math.max(...b[1].picks.map(p=>p.edge||0))-Math.max(...a[1].picks.map(p=>p.edge||0))
+  );
+  pc.innerHTML='<div class="game-list">'+gameList.map(([event,group],idx)=>{
+    const isSoccer=(group.sport||'').toLowerCase()==='soccer';
+    const rowsHtml=group.picks.map(p=>{
+      const edge=((p.edge||0)*100).toFixed(1);
+      const stake=(p.stake_units||0).toFixed(2);
+      const proj=p.projected_score?`<div class="pick-row-proj">${p.projected_score}</div>`:'';
+      return `<div class="pick-row">
+        <div class="pick-row-left">
+          <div class="pick-row-market">${p.market||'?'}</div>${proj}
         </div>
-        <span class="pick-stake mono">${stake}u</span>
-      </div>${proj}
+        <div class="pick-row-right">
+          <span class="pick-row-edge">+${edge}%</span>
+          <span class="pick-row-line">${p.line||'?'}</span>
+          <div class="pick-row-meta">
+            <div class="pick-row-book">${p.book||'?'}</div>
+            <div class="pick-row-stake">${stake}u</div>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+    const n=group.picks.length;
+    return `<div class="game-group${idx===0?' open':''}">
+      <div class="game-hdr" onclick="this.closest('.game-group').classList.toggle('open')">
+        <div class="game-hdr-left">
+          <span class="sport-chip${isSoccer?' soccer':''}">${group.sport||'?'}</span>
+          <span class="game-title">${event}</span>
+        </div>
+        <div class="game-hdr-right">
+          <span class="game-count">${n} pick${n!==1?'s':''}</span>
+          <span class="game-chevron">▼</span>
+        </div>
+      </div>
+      <div class="game-body"><div class="game-body-inner">${rowsHtml}</div></div>
     </div>`;
   }).join('')+'</div>';
 }
