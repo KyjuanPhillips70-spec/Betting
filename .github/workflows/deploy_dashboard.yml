@@ -1,6 +1,10 @@
 name: Deploy Dashboard to GitHub Pages
 
 on:
+  schedule:
+    - cron: '30 13 * * *'  # 30 min after 9 AM ET card
+    - cron: '30 17 * * *'  # 30 min after 1 PM ET card
+    - cron: '30 22 * * *'  # 30 min after 6 PM ET card
   workflow_run:
     workflows: ["+EV Daily Card"]
     types: [completed]
@@ -20,7 +24,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: claude/ev-sports-betting-bot-e1eaf1
+          ref: main
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python 3.11
