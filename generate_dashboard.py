@@ -15,6 +15,9 @@ import argparse
 import json
 import re
 import sqlite3
+import time
+import urllib.parse
+import urllib.request
 from collections import Counter, defaultdict
 from datetime import date, datetime
 from pathlib import Path
@@ -29,6 +32,125 @@ def _safe_float(v) -> float:
         return float(v)
     except (TypeError, ValueError):
         return 0.0
+
+
+# ---------------------------------------------------------------------------
+# MLB Stats API helpers (season game logs + handedness splits)
+# ---------------------------------------------------------------------------
+
+_MLB_API = "https://statsapi.mlb.com/api/v1"
+_pid_cache: dict = {}
+
+_MLB_STAT_KEY = {
+    "Batter Hits":          "hits",
+    "Batter Total Bases":   "totalBases",
+    "Batter Home Runs":     "homeRuns",
+    "Batter Rbis":          "rbi",
+    "Batter Walks":         "baseOnBalls",
+    "Batter Strikeouts":    "strikeOuts",
+    "Pitcher Strikeouts":   "strikeOuts",
+    "Pitcher Outs":         "outs",
+    "Pitcher Hits Allowed": "hits",
+    "Pitcher Walks":        "baseOnBalls",
+    "Pitcher Earned Runs":  "earnedRuns",
+}
+
+_PITCHER_STATS = {
+    "Pitcher Strikeouts", "Pitcher Outs",
+    "Pitcher Hits Allowed", "Pitcher Walks", "Pitcher Earned Runs",
+}
+
+
+def _mlb_get(path, params=None, timeout=7):
+    url = _MLB_API + path
+    if params:
+        url += "?" + urllib.parse.urlencode(params)
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Python/urllib"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read().decode())
+    except Exception:
+        return {}
+
+
+def _mlb_player_id(name):
+    if name in _pid_cache:
+        return _pid_cache[name]
+    data = _mlb_get("/people/search", {"names": name, "sportId": 1})
+    pid = None
+    for p in (data.get("people") or []):
+        if p.get("fullName", "").lower() == name.lower():
+            pid = p["id"]
+            break
+    if pid is None and data.get("people"):
+        pid = data["people"][0].get("id")
+    _pid_cache[name] = pid
+    return pid
+
+
+def _mlb_game_log(pid, group, stat_key, season=2025):
+    data = _mlb_get(f"/people/{pid}/stats", {
+        "stats": "gameLog", "season": season,
+        "group": group,     "gameType": "R",
+    })
+    games = []
+    for blk in (data.get("stats") or []):
+        for sp in (blk.get("splits") or []):
+            s   = sp.get("stat", {})
+            opp = (sp.get("opponent") or {})
+            val = s.get(stat_key)
+            games.append({
+                "date": (sp.get("date") or "")[:10],
+                "opp":  opp.get("abbreviation") or opp.get("teamName") or "",
+                "home": sp.get("isHome", True),
+                "val":  float(val) if val is not None else None,
+            })
+    return games  # chronological order oldest→newest
+
+
+def _mlb_hand_splits(pid, group, stat_key, season=2025):
+    data = _mlb_get(f"/people/{pid}/stats", {
+        "stats": "statSplits", "season": season,
+        "group": group, "sitCodes": "vr,vl", "gameType": "R",
+    })
+    out = {}
+    for blk in (data.get("stats") or []):
+        for sp in (blk.get("splits") or []):
+            code = (sp.get("split") or {}).get("code", "")
+            if code in ("vr", "vl"):
+                s = sp.get("stat", {})
+                label = "vs RHP" if code == "vr" else "vs LHP"
+                out[label] = {
+                    "g":    s.get("gamesPlayed", 0),
+                    "avg":  s.get("avg", "---"),
+                    "ops":  s.get("ops", "---"),
+                    "stat": s.get(stat_key, 0),
+                    "ab":   s.get("atBats") or s.get("battersFaced", 0),
+                }
+    return out
+
+
+def fetch_player_seasons(prop_bets, season=2025):
+    """For each unique player+stat in prop_bets, fetch MLB season game log + splits."""
+    seen = {}
+    for bet in prop_bets:
+        player   = (bet.get("player") or "").strip()
+        stat     = (bet.get("stat")   or "").strip()
+        key      = f"{player}||{stat}"
+        if not player or key in seen:
+            continue
+        is_pitcher = stat in _PITCHER_STATS
+        group      = "pitching" if is_pitcher else "hitting"
+        stat_key   = _MLB_STAT_KEY.get(stat)
+        pid        = _mlb_player_id(player)
+        if not pid or not stat_key:
+            seen[key] = {"games": [], "splits": {}}
+            continue
+        games  = _mlb_game_log(pid, group, stat_key, season)
+        splits = {} if is_pitcher else _mlb_hand_splits(pid, group, stat_key, season)
+        seen[key] = {"pid": pid, "games": games, "splits": splits}
+        time.sleep(0.12)
+    return seen
 
 
 def read_db(db_path: str) -> dict:
@@ -151,15 +273,23 @@ def read_db(db_path: str) -> dict:
 
     conn.close()
 
+    # Fetch full-season game logs + handedness splits from MLB Stats API
+    try:
+        player_seasons = fetch_player_seasons(prop_bets)
+    except Exception as exc:
+        print(f"Warning: MLB API fetch failed: {exc}")
+        player_seasons = {}
+
     return {
-        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S ET"),
-        "today":        today_str,
-        "today_picks":  today_picks,
-        "recent_bets":  bets[:100],
-        "daily_pnl":    daily_rows,
-        "top_markets":  top_markets,
-        "sports":       sports,
-        "prop_bets":    prop_bets,
+        "generated_at":   datetime.now().strftime("%Y-%m-%d %H:%M:%S ET"),
+        "today":          today_str,
+        "today_picks":    today_picks,
+        "recent_bets":    bets[:100],
+        "daily_pnl":      daily_rows,
+        "top_markets":    top_markets,
+        "sports":         sports,
+        "prop_bets":      prop_bets,
+        "player_seasons": player_seasons,
         "stats": {
             "total_picks":    len(bets),
             "n_resolved":     n_resolved,
@@ -498,7 +628,15 @@ footer{
 .detail-player{font-size:1.2rem;font-weight:800;color:var(--t1);line-height:1.2}
 .detail-prop-meta{font-size:.8rem;color:var(--t2);margin-top:.25rem}
 .detail-avg{background:var(--surf2);border:1px solid var(--border2);border-radius:var(--r);padding:.4rem .8rem;font-size:.82rem;font-weight:700;color:var(--amber);font-family:'Consolas','Menlo',monospace;white-space:nowrap;flex-shrink:0;align-self:flex-start}
-.detail-chart-wrap{background:var(--surf);border:1px solid var(--border);border-radius:var(--r-lg);padding:.85rem .5rem .5rem 0;margin-bottom:.75rem}
+.detail-chart-wrap{background:var(--surf);border:1px solid var(--border);border-radius:var(--r-lg);padding:.85rem .5rem .5rem 0;margin-bottom:.75rem;overflow-x:auto}
+/* Splits */
+.splits-row{display:grid;grid-template-columns:1fr 1fr;gap:.6rem;margin-bottom:.75rem}
+.split-card{background:var(--surf);border:1px solid var(--border);border-radius:var(--r);padding:.75rem .85rem}
+.split-title{font-size:.58rem;text-transform:uppercase;letter-spacing:.1em;color:var(--tm);font-weight:700;margin-bottom:.45rem}
+.split-avg{font-size:1.15rem;font-weight:800;color:var(--t1);font-family:'Consolas','Menlo',monospace;line-height:1}
+.split-ops{font-size:.72rem;color:var(--t2);font-family:'Consolas','Menlo',monospace;margin-top:.15rem}
+.split-stat{font-size:.82rem;font-weight:700;color:var(--amber);font-family:'Consolas','Menlo',monospace;margin-top:.25rem}
+.split-meta{font-size:.62rem;color:var(--tm);margin-top:.2rem}
 .detail-tf-row{display:flex;gap:0;border:1px solid var(--border);border-radius:var(--r-lg);overflow:hidden;margin-bottom:.75rem}
 .detail-tf-btn{flex:1;background:none;border:none;border-right:1px solid var(--border);padding:.55rem .25rem;cursor:pointer;font-family:inherit;text-align:center;transition:background .1s}
 .detail-tf-btn:last-child{border-right:none}
@@ -649,6 +787,7 @@ footer{
     </div>
     <div class="detail-chart-wrap" id="detail-chart-wrap"></div>
     <div class="detail-tf-row" id="detail-tf-row"></div>
+    <div id="detail-splits-row"></div>
     <div id="detail-book-row"></div>
   </div>
 </div>
@@ -986,6 +1125,49 @@ function renderPropList() {
   }).join('');
 }
 
+// Chart from actual MLB season game log data
+function renderSeasonChart(games, thresh, side) {
+  const valid = games.filter(g => g.val != null);
+  if (!valid.length) return '<div style="padding:2rem;text-align:center;color:var(--tm);font-size:.8rem">No game data available</div>';
+  const n = valid.length;
+  const H=185, ML=32, MR=8, MT=22, MB=42;
+  const cH=H-MT-MB;
+  // Dynamic width so full-season charts scroll
+  const minBw = n > 20 ? 14 : Math.max(14, 320/n);
+  const W = ML + MR + n*minBw + (n-1)*3;
+  const cW = W - ML - MR;
+  const bw = (cW - (n-1)*3) / n;
+  const vals = valid.map(g => g.val);
+  const maxV = Math.max(...vals, thresh) * 1.28;
+  function sy(v) { return MT + cH - (v / maxV * cH); }
+  const gridVals = [0, +(thresh/2).toFixed(1), thresh, +(maxV*0.78).toFixed(1)];
+  const grid = [...new Set(gridVals)].map(v => {
+    const y = sy(v);
+    return `<line x1="${ML}" y1="${y.toFixed(1)}" x2="${ML+cW}" y2="${y.toFixed(1)}" stroke="rgba(30,46,70,.7)" stroke-width=".5"/>
+    <text x="${(ML-4)}" y="${(y+3).toFixed(1)}" text-anchor="end" fill="#3A506A" font-size="8" font-family="Consolas,Menlo,monospace">${v}</text>`;
+  }).join('');
+  const bars = valid.map((g, i) => {
+    const x = ML + i*(bw+3);
+    const barTop = sy(g.val), barH = Math.max(2, cH-(barTop-MT));
+    const hit = side==='O' ? g.val >= thresh : g.val <= thresh;
+    const col = hit ? '#4ADE80' : '#F87171';
+    const showLbl = n <= 25;
+    const showDate = n <= 20;
+    const showOpp = n <= 12;
+    const v = g.val % 1 === 0 ? g.val : g.val.toFixed(1);
+    const valLbl = showLbl ? `<text x="${(x+bw/2).toFixed(1)}" y="${(barTop-4).toFixed(1)}" text-anchor="middle" fill="#E8EDF6" font-size="9" font-family="Consolas,Menlo,monospace">${v}</text>` : '';
+    const dateLbl = showDate ? `<text x="${(x+bw/2).toFixed(1)}" y="${(MT+cH+13).toFixed(1)}" text-anchor="middle" fill="#4E6480" font-size="8" font-family="Consolas,Menlo,monospace">${g.date.slice(5)}</text>` : '';
+    const oppLbl = showOpp && g.opp ? `<text x="${(x+bw/2).toFixed(1)}" y="${(MT+cH+24).toFixed(1)}" text-anchor="middle" fill="#2D4060" font-size="7" font-family="Consolas,Menlo,monospace">${g.opp}</text>` : '';
+    return `<rect x="${x.toFixed(1)}" y="${barTop.toFixed(1)}" width="${bw.toFixed(1)}" height="${barH.toFixed(1)}" rx="3" fill="${col}" fill-opacity=".9"/>${valLbl}${dateLbl}${oppLbl}`;
+  }).join('');
+  const lineY = sy(thresh);
+  const thrLine = `<line x1="${ML}" y1="${lineY.toFixed(1)}" x2="${ML+cW}" y2="${lineY.toFixed(1)}" stroke="white" stroke-width="1.5"/>
+  <text x="${(ML-4)}" y="${(lineY+3).toFixed(1)}" text-anchor="end" fill="#E8A830" font-size="9" font-weight="bold" font-family="Consolas,Menlo,monospace">${thresh}</text>`;
+  const svgW = Math.max(W, 350);
+  return `<svg viewBox="0 0 ${svgW} ${H}" width="${svgW}" style="display:block;overflow:visible;min-width:100%">${grid}${bars}${thrLine}</svg>`;
+}
+
+// Fallback chart from our bet history (used when no season data available)
 function renderDetailChart(bets, thresh) {
   if (!bets.length) return '<div style="padding:2rem;text-align:center;color:var(--tm);font-size:.8rem">No data for this timeframe</div>';
   const W=400, H=185, ML=32, MR=8, MT=22, MB=42;
@@ -995,14 +1177,12 @@ function renderDetailChart(bets, thresh) {
   const n = bets.length;
   const bw = Math.max(8, (cW - (n-1)*3) / n);
   function sy(v) { return MT + cH - (v / maxV * cH); }
-  // Grid lines
   const gridVals = [0, Math.round(thresh/2*10)/10, thresh, Math.round(maxV*0.78*10)/10];
   let grid = gridVals.map(v => {
     const y = sy(v);
     return `<line x1="${ML}" y1="${y.toFixed(1)}" x2="${ML+cW}" y2="${y.toFixed(1)}" stroke="rgba(30,46,70,.7)" stroke-width=".5"/>
     <text x="${(ML-4)}" y="${(y+3).toFixed(1)}" text-anchor="end" fill="#3A506A" font-size="8" font-family="Consolas,Menlo,monospace">${v}</text>`;
   }).join('');
-  // Bars
   let bars = bets.map((b, i) => {
     const x = ML + i*(bw+3);
     const val = b.proj_stat!=null ? b.proj_stat : thresh;
@@ -1014,7 +1194,6 @@ function renderDetailChart(bets, thresh) {
     const oppLbl = opp ? `<text x="${(x+bw/2).toFixed(1)}" y="${(MT+cH+24).toFixed(1)}" text-anchor="middle" fill="#2D4060" font-size="7" font-family="Consolas,Menlo,monospace">${opp}</text>` : '';
     return `<rect x="${x.toFixed(1)}" y="${barTop.toFixed(1)}" width="${bw.toFixed(1)}" height="${barH.toFixed(1)}" rx="3" fill="${col}" fill-opacity=".9"/>${valLbl}${dateLbl}${oppLbl}`;
   }).join('');
-  // Threshold line
   const lineY = sy(thresh);
   const thrLine = `<line x1="${ML}" y1="${lineY.toFixed(1)}" x2="${ML+cW}" y2="${lineY.toFixed(1)}" stroke="white" stroke-width="1.5"/>
   <text x="${(ML-4)}" y="${(lineY+3).toFixed(1)}" text-anchor="end" fill="#E8A830" font-size="9" font-weight="bold" font-family="Consolas,Menlo,monospace">${thresh}</text>`;
@@ -1023,28 +1202,65 @@ function renderDetailChart(bets, thresh) {
 
 function renderDetailView() {
   if (activeIdx < 0) return;
-  const pd = propList[activeIdx];
+  const pd  = propList[activeIdx];
+  const key = pd.player + '||' + pd.stat;
+  const seasonData  = (D.player_seasons || {})[key] || {games:[],splits:{}};
+  const seasonGames = seasonData.games || [];
+  const hasSeasonData = seasonGames.length > 0;
+  const sl  = STAT_LABELS[pd.stat] || pd.stat.replace(/^(Batter|Pitcher)\s+/, '');
   const tfs = ['L5','L10','L15','all'];
+  const tfN = {L5:5,L10:10,L15:15,all:9999};
   const tfLbls = {L5:'L5',L10:'L10',L15:'L15',all:'2025'};
-  // Timeframe buttons with hit rates
+
+  // Timeframe buttons — hit rate from our bet history
   document.getElementById('detail-tf-row').innerHTML = tfs.map(tf => {
-    const sl2 = getSlice(pd.bets, tf);
-    const hr = hitRate(sl2);
+    const betSlice = getSlice(pd.bets, tf);
+    const hr = hitRate(betSlice);
     const hrTxt = hr !== null ? hr + '%' : '—';
     return `<button class="detail-tf-btn${tf===propTf?' active':''}" onclick="setDetailTf('${tf}')">
       <div class="detail-tf-lbl">${tfLbls[tf]}</div>
       <div class="detail-tf-rate" style="color:${rateColor(hr)}">${hrTxt}</div>
     </button>`;
   }).join('');
-  // AVG badge
-  const slice = getSlice(pd.bets, propTf);
-  const avg = avgProj(slice);
-  document.getElementById('detail-avg').textContent = avg !== null ? 'AVG: ' + avg.toFixed(1) : '';
-  // Chart
-  document.getElementById('detail-chart-wrap').innerHTML = renderDetailChart(slice, pd.threshold);
+
+  // Chart + AVG: prefer real MLB season data, fall back to bet history
+  if (hasSeasonData) {
+    const limit = tfN[propTf];
+    const chartGames = limit < 9999 ? seasonGames.slice(-limit) : seasonGames;
+    const validVals  = chartGames.filter(g=>g.val!=null).map(g=>g.val);
+    const avg = validVals.length ? (validVals.reduce((a,b)=>a+b,0)/validVals.length) : null;
+    document.getElementById('detail-avg').textContent = avg!=null ? 'AVG: '+avg.toFixed(1) : '';
+    document.getElementById('detail-chart-wrap').innerHTML = renderSeasonChart(chartGames, pd.threshold, pd.side);
+  } else {
+    const betSlice = getSlice(pd.bets, propTf);
+    const avg = avgProj(betSlice);
+    document.getElementById('detail-avg').textContent = avg!=null ? 'AVG: '+avg.toFixed(1) : '';
+    document.getElementById('detail-chart-wrap').innerHTML = renderDetailChart(betSlice, pd.threshold);
+  }
+
+  // Bat vs Pitch splits (vs RHP / vs LHP)
+  const splitsEl = document.getElementById('detail-splits-row');
+  const splits = seasonData.splits || {};
+  const splitEntries = Object.entries(splits);
+  if (splitsEl && splitEntries.length) {
+    splitsEl.innerHTML = `<div class="sec" style="margin:.85rem 0 .5rem"><h2>Bat vs Pitch</h2><div class="sec-rule"></div></div>
+      <div class="splits-row">` +
+      splitEntries.map(([hand, s]) => {
+        const perG = s.g>0 ? (s.stat/s.g).toFixed(2) : '—';
+        const avgRow = s.avg && s.avg!=='---' ? `<div class="split-avg">${s.avg}</div><div class="split-ops">OPS ${s.ops||'---'}</div>` : '';
+        return `<div class="split-card">
+          <div class="split-title">${hand}</div>
+          ${avgRow}
+          <div class="split-stat">${s.stat} ${sl}</div>
+          <div class="split-meta">${s.g} G &middot; ${perG}/G</div>
+        </div>`;
+      }).join('') + `</div>`;
+  } else if (splitsEl) {
+    splitsEl.innerHTML = '';
+  }
+
   // Book row
-  const recent = pd.bets[pd.bets.length - 1];
-  const sl = STAT_LABELS[pd.stat] || pd.stat.replace(/^(Batter|Pitcher)\s+/, '');
+  const recent = pd.bets[pd.bets.length-1];
   document.getElementById('detail-book-row').innerHTML = `<div class="detail-book">
     <span class="detail-book-label">${recent ? recent.book : '?'}</span>
     <span class="detail-book-line">${recent ? recent.line : '?'}</span>
@@ -1159,7 +1375,7 @@ def generate(db_path: str, out_path: str) -> None:
             "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S ET"),
             "today": date.today().isoformat(),
             "today_picks": [], "recent_bets": [], "daily_pnl": [],
-            "top_markets": [], "sports": [],
+            "top_markets": [], "sports": [], "prop_bets": [], "player_seasons": {},
             "stats": {"total_picks":0,"n_resolved":0,"n_wins":0,"win_rate":0,
                       "roi":0,"total_profit":0,"avg_edge":0,"avg_clv":None},
         }
