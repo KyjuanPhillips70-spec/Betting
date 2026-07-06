@@ -463,87 +463,53 @@ footer{
 .tab-panel{display:none}
 .tab-panel.active{display:block}
 
-/* ── Player props — filter bar ── */
-.prop-filter-bar{display:flex;flex-direction:column;gap:.65rem;margin-bottom:1rem}
+/* ── Player props — two-view system ── */
+.prop-filter-bar{display:flex;flex-direction:column;gap:.65rem;margin:1rem 0 .75rem}
 .prop-search-wrap{position:relative}
-.prop-search{
-  width:100%;background:var(--surf);border:1px solid var(--border2);
-  border-radius:var(--r);color:var(--t1);font-size:.82rem;font-family:inherit;
-  padding:.55rem .9rem .55rem 2.2rem;
-}
+.prop-search{width:100%;background:var(--surf);border:1px solid var(--border2);border-radius:var(--r);color:var(--t1);font-size:.82rem;font-family:inherit;padding:.55rem .9rem .55rem 2.2rem}
 .prop-search::placeholder{color:var(--tm)}
 .prop-search:focus{outline:none;border-color:var(--mlb)}
-.prop-search-icon{
-  position:absolute;left:.75rem;top:50%;transform:translateY(-50%);
-  color:var(--tm);font-size:.85rem;pointer-events:none;
-}
+.prop-search-icon{position:absolute;left:.75rem;top:50%;transform:translateY(-50%);color:var(--tm);font-size:.85rem;pointer-events:none}
 .prop-filter-lbl{font-size:.6rem;text-transform:uppercase;letter-spacing:.09em;color:var(--tm);margin-bottom:.35rem}
 .prop-filter-chips{display:flex;gap:.35rem;flex-wrap:wrap}
-.prop-count-row{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem}
-.prop-count{font-size:.68rem;color:var(--tm);font-variant-numeric:tabular-nums}
-
-/* ── Prop cards ── */
-.prop-cards{display:flex;flex-direction:column;gap:.65rem}
-.prop-card{
-  background:var(--surf);border:1px solid var(--border);
-  border-radius:var(--r-lg);padding:.95rem 1.1rem;
-  display:flex;flex-direction:column;gap:.6rem;
-  transition:border-color .15s;
-}
-.prop-card:hover{border-color:var(--border2)}
-.prop-card-hdr{display:flex;align-items:flex-start;justify-content:space-between;gap:.75rem}
-.prop-card-player{font-size:.95rem;font-weight:700;color:var(--t1);line-height:1.2}
-.prop-card-meta{font-size:.67rem;color:var(--tm);margin-top:.2rem}
-.prop-card-badges{display:flex;align-items:center;gap:.4rem;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end}
-
-.stat-chip{
-  display:inline-flex;align-items:center;
-  padding:.15rem .5rem;border-radius:4px;
-  font-size:.58rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;
-  background:rgba(200,128,15,.1);color:var(--amber);border:1px solid rgba(200,128,15,.2);
-  white-space:nowrap;
-}
-.result-badge{
-  display:inline-flex;align-items:center;
-  padding:.15rem .5rem;border-radius:4px;
-  font-size:.65rem;font-weight:700;white-space:nowrap;
-}
-.result-win{background:rgba(74,222,128,.1);color:var(--win);border:1px solid rgba(74,222,128,.2)}
-.result-loss{background:rgba(248,113,113,.1);color:var(--loss);border:1px solid rgba(248,113,113,.2)}
-.result-pend{background:var(--surf2);color:var(--tm);border:1px solid var(--border2)}
-
-/* Proj vs Line comparison block */
-.prop-comparison{
-  display:flex;align-items:center;gap:0;
-  background:var(--surf2);border-radius:var(--r);overflow:hidden;
-}
-.prop-comp-side{
-  flex:1;display:flex;flex-direction:column;align-items:center;
-  padding:.6rem .5rem;gap:.2rem;
-}
-.prop-comp-val{
-  font-size:1.45rem;font-weight:800;line-height:1;
-  font-family:'Consolas','Menlo',monospace;font-variant-numeric:tabular-nums;
-}
-.prop-comp-lbl{font-size:.58rem;text-transform:uppercase;letter-spacing:.08em;color:var(--tm)}
-.prop-comp-mid{
-  display:flex;flex-direction:column;align-items:center;justify-content:center;
-  padding:.5rem .65rem;gap:.15rem;border-left:1px solid var(--border);border-right:1px solid var(--border);
-}
-.prop-comp-delta{font-size:.95rem;font-weight:800;font-family:'Consolas','Menlo',monospace;line-height:1}
-.prop-comp-tag{font-size:.55rem;color:var(--tm);text-transform:uppercase;letter-spacing:.06em;margin-top:.1rem}
-
-/* Card footer — odds row */
-.prop-card-ftr{display:flex;align-items:center;justify-content:space-between;gap:.5rem;flex-wrap:wrap}
-.prop-odds-row{display:flex;align-items:center;gap:.55rem}
-.prop-side-badge{font-size:.8rem;font-weight:800;color:var(--odds);font-family:'Consolas','Menlo',monospace}
-.prop-odds-line{font-size:.88rem;font-weight:700;color:var(--t1);font-family:'Consolas','Menlo',monospace}
-.prop-book-lbl{font-size:.63rem;color:var(--tm);text-transform:uppercase;letter-spacing:.05em;
-  background:var(--surf2);border:1px solid var(--border);border-radius:3px;padding:.1rem .35rem}
-.prop-right-row{display:flex;align-items:center;gap:.65rem}
-.prop-edge-val{font-size:.92rem;font-weight:800;color:var(--win);font-family:'Consolas','Menlo',monospace}
-.prop-stake-val{font-size:.7rem;color:var(--t2);font-family:'Consolas','Menlo',monospace}
-.prop-pnl-val{font-size:.78rem;font-weight:600;font-family:'Consolas','Menlo',monospace}
+.prop-tf-row{display:flex;gap:.4rem;flex-wrap:wrap}
+.prop-tf-btn{background:var(--surf);border:1px solid var(--border);border-radius:var(--r);padding:.3rem .75rem;font-size:.68rem;font-weight:700;color:var(--t2);cursor:pointer;font-family:inherit;text-transform:uppercase;letter-spacing:.05em;transition:all .15s}
+.prop-tf-btn:hover{border-color:var(--border2);color:var(--t1)}
+.prop-tf-btn.active{background:rgba(90,122,232,.12);border-color:var(--mlb);color:var(--mlb)}
+/* List rows */
+.prop-rows{display:flex;flex-direction:column;background:var(--surf);border:1px solid var(--border);border-radius:var(--r-lg);overflow:hidden}
+.prop-row{display:flex;align-items:center;gap:.75rem;padding:.8rem .9rem;border-bottom:1px solid var(--border);cursor:pointer;transition:background .1s}
+.prop-row:last-child{border-bottom:none}
+.prop-row:hover{background:rgba(255,255,255,.025)}
+.prop-row-left{flex:1;min-width:0}
+.prop-row-name{font-size:.9rem;font-weight:700;color:var(--t1)}
+.prop-row-desc{font-size:.68rem;color:var(--t2);margin-top:.15rem;display:flex;align-items:center;gap:.35rem;flex-wrap:wrap}
+.prop-row-odds{color:var(--tm)}
+.stat-chip-sm{display:inline-flex;align-items:center;padding:.1rem .4rem;border-radius:3px;font-size:.55rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;background:rgba(200,128,15,.1);color:var(--amber);border:1px solid rgba(200,128,15,.2);white-space:nowrap}
+.prop-row-mid{display:flex;flex-direction:column;align-items:center;gap:.05rem;flex-shrink:0;min-width:44px}
+.prop-row-edge{font-size:.9rem;font-weight:800;color:var(--win);font-family:'Consolas','Menlo',monospace}
+.prop-row-edge-lbl{font-size:.52rem;text-transform:uppercase;letter-spacing:.09em;color:var(--tm)}
+.prop-row-right{display:flex;flex-direction:column;align-items:flex-end;gap:.25rem;flex-shrink:0}
+.prop-row-hit{font-size:.72rem;font-weight:700;font-family:'Consolas','Menlo',monospace}
+/* Detail view */
+.detail-back-bar{padding:.75rem 0 .25rem}
+.detail-back{background:none;border:none;color:var(--mlb);font-size:.82rem;font-weight:700;cursor:pointer;font-family:inherit;padding:0;display:inline-flex;align-items:center;gap:.35rem}
+.detail-header{display:flex;align-items:flex-start;justify-content:space-between;margin:.5rem 0 .85rem;gap:1rem}
+.detail-player{font-size:1.2rem;font-weight:800;color:var(--t1);line-height:1.2}
+.detail-prop-meta{font-size:.8rem;color:var(--t2);margin-top:.25rem}
+.detail-avg{background:var(--surf2);border:1px solid var(--border2);border-radius:var(--r);padding:.4rem .8rem;font-size:.82rem;font-weight:700;color:var(--amber);font-family:'Consolas','Menlo',monospace;white-space:nowrap;flex-shrink:0;align-self:flex-start}
+.detail-chart-wrap{background:var(--surf);border:1px solid var(--border);border-radius:var(--r-lg);padding:.85rem .5rem .5rem 0;margin-bottom:.75rem}
+.detail-tf-row{display:flex;gap:0;border:1px solid var(--border);border-radius:var(--r-lg);overflow:hidden;margin-bottom:.75rem}
+.detail-tf-btn{flex:1;background:none;border:none;border-right:1px solid var(--border);padding:.55rem .25rem;cursor:pointer;font-family:inherit;text-align:center;transition:background .1s}
+.detail-tf-btn:last-child{border-right:none}
+.detail-tf-btn.active{background:rgba(90,122,232,.1)}
+.detail-tf-lbl{font-size:.65rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--t2)}
+.detail-tf-btn.active .detail-tf-lbl{color:var(--mlb)}
+.detail-tf-rate{font-size:.8rem;font-weight:800;font-family:'Consolas','Menlo',monospace;margin-top:.15rem}
+.detail-book{display:flex;align-items:center;gap:.75rem;background:var(--surf);border:1px solid var(--border);border-radius:var(--r);padding:.65rem .9rem;flex-wrap:wrap}
+.detail-book-label{font-size:.7rem;font-weight:700;color:var(--t2);text-transform:uppercase;letter-spacing:.05em}
+.detail-book-line{font-size:1rem;font-weight:800;color:var(--odds);font-family:'Consolas','Menlo',monospace}
+.detail-book-desc{font-size:.72rem;color:var(--tm)}
 
 /* ── Mobile (≤540px — iPhone 13 and similar) ── */
 @media(max-width:540px){
@@ -585,10 +551,11 @@ footer{
   /* Tabs on mobile */
   .tab{padding:.55rem .7rem;font-size:.65rem}
 
-  /* Prop cards on mobile */
-  .prop-card{padding:.8rem .85rem}
-  .prop-comp-val{font-size:1.2rem}
-  .prop-card-player{font-size:.88rem}
+  /* Props on mobile */
+  .prop-row{padding:.65rem .75rem;gap:.5rem}
+  .prop-row-name{font-size:.82rem}
+  .detail-player{font-size:1.05rem}
+  .detail-chart-wrap{padding:.5rem .25rem .5rem 0}
 }
 </style>
 </head>
@@ -647,40 +614,43 @@ footer{
 
 <!-- Player Props -->
 <div id="tab-props" class="tab-panel">
-  <div class="sec" style="margin-top:1rem">
-    <h2>Player Props History</h2>
-    <div class="sec-rule"></div>
-  </div>
-  <div class="prop-filter-bar">
-    <div class="prop-search-wrap">
-      <span class="prop-search-icon">&#9906;</span>
-      <input id="prop-search" class="prop-search" type="text" placeholder="Search player…" oninput="renderPropCards()">
-    </div>
-    <div>
-      <div class="prop-filter-lbl">Stat</div>
-      <div class="prop-filter-chips" id="prop-stat-chips"></div>
-    </div>
-    <div>
-      <div class="prop-filter-lbl">Result</div>
-      <div class="prop-filter-chips">
-        <button class="filter-chip active" data-result="all"     onclick="setResProp('all')">All</button>
-        <button class="filter-chip"         data-result="win"     onclick="setResProp('win')">Won</button>
-        <button class="filter-chip"         data-result="loss"    onclick="setResProp('loss')">Lost</button>
-        <button class="filter-chip"         data-result="pending" onclick="setResProp('pending')">Pending</button>
+  <!-- List View -->
+  <div id="props-list-view">
+    <div class="prop-filter-bar">
+      <div class="prop-search-wrap">
+        <span class="prop-search-icon">&#9906;</span>
+        <input id="prop-search" class="prop-search" type="text" placeholder="Search player…" oninput="renderPropList()">
+      </div>
+      <div>
+        <div class="prop-filter-lbl">Stat</div>
+        <div class="prop-filter-chips" id="prop-stat-chips"></div>
+      </div>
+      <div class="prop-tf-row">
+        <button class="prop-tf-btn" data-tf="L5"  onclick="setPropTf('L5')">L5</button>
+        <button class="prop-tf-btn active" data-tf="L10" onclick="setPropTf('L10')">L10</button>
+        <button class="prop-tf-btn" data-tf="L15" onclick="setPropTf('L15')">L15</button>
+        <button class="prop-tf-btn" data-tf="all" onclick="setPropTf('all')">2025</button>
       </div>
     </div>
-    <div class="prop-count-row">
-      <span class="prop-count" id="prop-count"></span>
-      <div class="prop-filter-chips">
-        <button class="filter-chip active" data-psort="date"   onclick="setPropSort('date')">Newest</button>
-        <button class="filter-chip"         data-psort="edge"   onclick="setPropSort('edge')">Best Edge</button>
-        <button class="filter-chip"         data-psort="player" onclick="setPropSort('player')">Player A–Z</button>
-      </div>
-    </div>
+    <div id="prop-rows" class="prop-rows"></div>
+    <div class="no-picks" id="prop-no-data" style="display:none">No player prop bets recorded yet — props appear after the next daily card run.</div>
   </div>
-  <div id="prop-cards" class="prop-cards"></div>
-  <div class="no-picks" id="prop-no-results" style="display:none">No props match your filters.</div>
-  <div class="no-picks" id="prop-no-data">No player prop bets recorded yet — props will appear here after the next daily card run.</div>
+  <!-- Detail View -->
+  <div id="props-detail-view" style="display:none">
+    <div class="detail-back-bar">
+      <button class="detail-back" onclick="closeDetail()">&#8592; All Props</button>
+    </div>
+    <div class="detail-header">
+      <div>
+        <div class="detail-player" id="detail-player-name"></div>
+        <div class="detail-prop-meta" id="detail-prop-meta"></div>
+      </div>
+      <div class="detail-avg" id="detail-avg"></div>
+    </div>
+    <div class="detail-chart-wrap" id="detail-chart-wrap"></div>
+    <div class="detail-tf-row" id="detail-tf-row"></div>
+    <div id="detail-book-row"></div>
+  </div>
 </div>
 
 <!-- Bet History -->
@@ -883,9 +853,6 @@ function initPerfCharts() {
 
 // ── Player Props ──────────────────────────────────────────────
 const propBets = D.prop_bets || [];
-let propStatFilter  = 'all';
-let propResFilter   = 'all';
-let propSortKey     = 'date';
 
 const STAT_LABELS = {
   'Batter Hits':'Hits','Batter Total Bases':'Total Bases','Batter Home Runs':'HR',
@@ -894,139 +861,221 @@ const STAT_LABELS = {
   'Pitcher Hits Allowed':'H Allow','Pitcher Walks':'BB Allow','Pitcher Earned Runs':'ER',
 };
 
-// Build stat chips
-const statChipsEl = document.getElementById('prop-stat-chips');
-if (statChipsEl && propBets.length) {
-  const uniqStats = [...new Set(propBets.map(p => p.stat))].sort();
-  statChipsEl.innerHTML =
-    `<button class="filter-chip active" data-pstat="all" onclick="setPropStat('all')">All</button>` +
-    uniqStats.map(s =>
-      `<button class="filter-chip" data-pstat="${s}" onclick="setPropStat('${s}')">${STAT_LABELS[s]||s.replace(/^(Batter|Pitcher)\s+/,'')}</button>`
-    ).join('');
-}
+// Build unique player+stat profiles
+const propList = [];
+const propByKey = {};
+propBets.forEach(b => {
+  const key = b.player + '||' + b.stat;
+  if (!propByKey[key]) {
+    const entry = {player:b.player,stat:b.stat,side:b.side,threshold:b.threshold,line:b.line,book:b.book,edge:b.edge,bets:[]};
+    propByKey[key] = entry;
+    propList.push(entry);
+  }
+  propByKey[key].bets.push(b);
+});
+// Sort each player's history oldest→newest (for chart left→right)
+propList.forEach(pd => pd.bets.sort((a,b) => a.date.localeCompare(b.date)));
+
+let propStatFilter = 'all';
+let propTf = 'L10';
+let activeIdx = -1;
+
+// Build stat filter chips
+(function(){
+  const el = document.getElementById('prop-stat-chips');
+  if (!el) return;
+  const stats = [...new Set(propBets.map(p => p.stat))].sort();
+  el.innerHTML = `<button class="filter-chip active" data-pstat="all" onclick="setPropStat('all')">All</button>` +
+    stats.map(s => `<button class="filter-chip" data-pstat="${s}" onclick="setPropStat('${s}')">${STAT_LABELS[s]||s.replace(/^(Batter|Pitcher)\s+/,'')}</button>`).join('');
+})();
 
 function setPropStat(v) {
   propStatFilter = v;
   document.querySelectorAll('[data-pstat]').forEach(c => c.classList.toggle('active', c.dataset.pstat === v));
-  renderPropCards();
+  renderPropList();
 }
-function setResProp(v) {
-  propResFilter = v;
-  document.querySelectorAll('[data-result]').forEach(c => c.classList.toggle('active', c.dataset.result === v));
-  renderPropCards();
-}
-function setPropSort(v) {
-  propSortKey = v;
-  document.querySelectorAll('[data-psort]').forEach(c => c.classList.toggle('active', c.dataset.psort === v));
-  renderPropCards();
+function setPropTf(tf) {
+  propTf = tf;
+  document.querySelectorAll('.prop-tf-btn').forEach(b => b.classList.toggle('active', b.dataset.tf === tf));
+  renderPropList();
 }
 
-function renderPropCards() {
+function getSlice(bets, tf) {
+  if (tf === 'L5')  return bets.slice(-5);
+  if (tf === 'L10') return bets.slice(-10);
+  if (tf === 'L15') return bets.slice(-15);
+  return bets;
+}
+function hitRate(bets) {
+  const s = bets.filter(b => b.result === 'win' || b.result === 'loss');
+  if (!s.length) return null;
+  return Math.round(s.filter(b => b.result === 'win').length / s.length * 100);
+}
+function avgProj(bets) {
+  const a = bets.filter(b => b.proj_stat != null);
+  if (!a.length) return null;
+  return a.reduce((s,b) => s + b.proj_stat, 0) / a.length;
+}
+function rateColor(hr) {
+  if (hr === null) return 'var(--tm)';
+  return hr >= 60 ? 'var(--win)' : hr >= 45 ? 'var(--t2)' : 'var(--loss)';
+}
+
+function miniSpark(bets, tf) {
+  const sl = getSlice(bets, tf);
+  if (!sl.length) return '';
+  const n = sl.length, W = 80, H = 28, gap = 1.5;
+  const bw = Math.max(3, (W - gap*(n-1)) / n);
+  const thresh = sl[0].threshold;
+  const vals = sl.map(b => b.proj_stat != null ? b.proj_stat : thresh);
+  const maxV = Math.max(...vals, thresh * 1.3) || 1;
+  const lineY = H - (thresh / maxV) * H;
+  let s = sl.map((b, i) => {
+    const x = i * (bw + gap);
+    const val = b.proj_stat != null ? b.proj_stat : thresh;
+    const bh = Math.max(3, (val / maxV) * H);
+    const col = b.result==='win' ? '#4ADE80' : b.result==='loss' ? '#F87171' : '#4E6480';
+    return `<rect x="${x.toFixed(1)}" y="${(H-bh).toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" rx="1.5" fill="${col}" fill-opacity=".9"/>`;
+  }).join('');
+  s += `<line x1="0" y1="${lineY.toFixed(1)}" x2="${W}" y2="${lineY.toFixed(1)}" stroke="rgba(255,255,255,.35)" stroke-width="1" stroke-dasharray="2,1.5"/>`;
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${s}</svg>`;
+}
+
+function renderPropList() {
   const query = (document.getElementById('prop-search')?.value || '').toLowerCase().trim();
-  let rows = propBets.filter(p => {
-    if (query && !p.player.toLowerCase().includes(query)) return false;
-    if (propStatFilter !== 'all' && p.stat !== propStatFilter) return false;
-    if (propResFilter === 'win'     && p.result !== 'win')  return false;
-    if (propResFilter === 'loss'    && p.result !== 'loss') return false;
-    if (propResFilter === 'pending' && p.result)            return false;
+  const rowsEl = document.getElementById('prop-rows');
+  const noData = document.getElementById('prop-no-data');
+  const filtered = propList.filter(pd => {
+    if (query && !pd.player.toLowerCase().includes(query)) return false;
+    if (propStatFilter !== 'all' && pd.stat !== propStatFilter) return false;
     return true;
   });
-
-  if (propSortKey === 'date')   rows.sort((a,b) => b.date.localeCompare(a.date));
-  if (propSortKey === 'edge')   rows.sort((a,b) => b.edge - a.edge);
-  if (propSortKey === 'player') rows.sort((a,b) => a.player.localeCompare(b.player));
-
-  const noData    = document.getElementById('prop-no-data');
-  const noResults = document.getElementById('prop-no-results');
-  const cards     = document.getElementById('prop-cards');
-  const countEl   = document.getElementById('prop-count');
-
-  if (!propBets.length) {
-    noData.style.display=''; noResults.style.display='none'; cards.innerHTML=''; return;
-  }
-  noData.style.display = 'none';
-  if (!rows.length) {
-    noResults.style.display=''; cards.innerHTML='';
-    if (countEl) countEl.textContent = '0 props';
+  if (!filtered.length) {
+    noData.style.display = '';
+    noData.textContent = propBets.length ? 'No props match your filters.' : 'No player prop bets recorded yet — props appear after the next daily card run.';
+    rowsEl.innerHTML = '';
     return;
   }
-  noResults.style.display = 'none';
-  if (countEl) countEl.textContent = rows.length + ' prop' + (rows.length!==1?'s':'');
-
-  cards.innerHTML = rows.map(p => {
-    const sl = STAT_LABELS[p.stat] || p.stat.replace(/^(Batter|Pitcher)\s+/,'');
-
-    const resBadge = p.result==='win'
-      ? '<span class="result-badge result-win">Win &#10003;</span>'
-      : p.result==='loss'
-      ? '<span class="result-badge result-loss">Loss &#10007;</span>'
-      : '<span class="result-badge result-pend">Pending</span>';
-
-    // Proj vs Line block
-    const hasProj = p.proj_stat !== null && p.proj_stat !== undefined;
-    let compBlock = '';
-    if (hasProj) {
-      const delta = p.proj_stat - p.threshold;
-      const favorable = (p.side==='O' && delta>0) || (p.side==='U' && delta<0);
-      const deltaCol = favorable ? 'var(--win)' : 'var(--loss)';
-      const deltaStr = (delta>=0?'+':'') + delta.toFixed(1);
-      compBlock = `<div class="prop-comparison">
-        <div class="prop-comp-side">
-          <div class="prop-comp-val" style="color:var(--amber)">${p.proj_stat.toFixed(1)}</div>
-          <div class="prop-comp-lbl">Projected</div>
-        </div>
-        <div class="prop-comp-mid">
-          <div class="prop-comp-delta" style="color:${deltaCol}">${deltaStr}</div>
-          <div class="prop-comp-tag">${p.side==='O'?'vs over':'vs under'}</div>
-        </div>
-        <div class="prop-comp-side">
-          <div class="prop-comp-val" style="color:var(--t2)">${p.threshold.toFixed(1)}</div>
-          <div class="prop-comp-lbl">Line</div>
-        </div>
-      </div>`;
-    }
-
-    // P&L
-    const pnlHtml = p.result
-      ? `<span class="prop-pnl-val ${p.profit>=0?'pnl-up':'pnl-dn'}">${p.profit>=0?'+':''}${p.profit.toFixed(2)}u</span>`
-      : '';
-
-    // Short event name
-    const ev = (p.event||'').split(' @ ');
-    const evShort = ev.length===2
-      ? ev[0].trim().split(' ').slice(-1)[0] + ' @ ' + ev[1].trim().split(' ').slice(-1)[0]
-      : (p.event||'');
-
-    return `<div class="prop-card">
-      <div class="prop-card-hdr">
-        <div>
-          <div class="prop-card-player">${p.player}</div>
-          <div class="prop-card-meta">${evShort} &middot; ${p.date.slice(5)}</div>
-        </div>
-        <div class="prop-card-badges">
-          <span class="stat-chip">${sl}</span>
-          ${resBadge}
+  noData.style.display = 'none';
+  rowsEl.innerHTML = filtered.map(pd => {
+    const idx = propList.indexOf(pd);
+    const sl = STAT_LABELS[pd.stat] || pd.stat.replace(/^(Batter|Pitcher)\s+/, '');
+    const slice = getSlice(pd.bets, propTf);
+    const hr = hitRate(slice);
+    const hrTxt = hr !== null ? hr + '%' : '—';
+    const spark = miniSpark(pd.bets, propTf);
+    const recent = pd.bets[pd.bets.length - 1];
+    return `<div class="prop-row" onclick="openDetail(${idx})">
+      <div class="prop-row-left">
+        <div class="prop-row-name">${pd.player}</div>
+        <div class="prop-row-desc">
+          <span class="stat-chip-sm">${sl}</span>
+          ${pd.side==='O'?'Over':'Under'} ${pd.threshold}
+          <span class="prop-row-odds">${recent ? recent.line : ''}</span>
         </div>
       </div>
-      ${compBlock}
-      <div class="prop-card-ftr">
-        <div class="prop-odds-row">
-          <span class="prop-side-badge">${p.side}${p.threshold}</span>
-          <span class="prop-odds-line">${p.line||'?'}</span>
-          <span class="prop-book-lbl">${p.book||'?'}</span>
-        </div>
-        <div class="prop-right-row">
-          <span class="prop-edge-val">+${p.edge}%</span>
-          <span class="prop-stake-val">${p.stake}u</span>
-          ${pnlHtml}
-        </div>
+      <div class="prop-row-mid">
+        <div class="prop-row-edge">+${pd.edge}%</div>
+        <div class="prop-row-edge-lbl">EDGE</div>
+      </div>
+      <div class="prop-row-right">
+        ${spark}
+        <div class="prop-row-hit" style="color:${rateColor(hr)}">${hrTxt}</div>
       </div>
     </div>`;
   }).join('');
 }
 
-if (propBets.length) renderPropCards();
-else document.getElementById('prop-no-data').style.display = '';
+function renderDetailChart(bets, thresh) {
+  if (!bets.length) return '<div style="padding:2rem;text-align:center;color:var(--tm);font-size:.8rem">No data for this timeframe</div>';
+  const W=400, H=185, ML=32, MR=8, MT=22, MB=42;
+  const cW=W-ML-MR, cH=H-MT-MB;
+  const vals = bets.map(b => b.proj_stat!=null ? b.proj_stat : thresh);
+  const maxV = Math.max(...vals, thresh) * 1.28;
+  const n = bets.length;
+  const bw = Math.max(8, (cW - (n-1)*3) / n);
+  function sy(v) { return MT + cH - (v / maxV * cH); }
+  // Grid lines
+  const gridVals = [0, Math.round(thresh/2*10)/10, thresh, Math.round(maxV*0.78*10)/10];
+  let grid = gridVals.map(v => {
+    const y = sy(v);
+    return `<line x1="${ML}" y1="${y.toFixed(1)}" x2="${ML+cW}" y2="${y.toFixed(1)}" stroke="rgba(30,46,70,.7)" stroke-width=".5"/>
+    <text x="${(ML-4)}" y="${(y+3).toFixed(1)}" text-anchor="end" fill="#3A506A" font-size="8" font-family="Consolas,Menlo,monospace">${v}</text>`;
+  }).join('');
+  // Bars
+  let bars = bets.map((b, i) => {
+    const x = ML + i*(bw+3);
+    const val = b.proj_stat!=null ? b.proj_stat : thresh;
+    const barTop = sy(val), barH = cH-(barTop-MT);
+    const col = b.result==='win'?'#4ADE80':b.result==='loss'?'#F87171':'#4E6480';
+    const valLbl = `<text x="${(x+bw/2).toFixed(1)}" y="${(barTop-4).toFixed(1)}" text-anchor="middle" fill="#E8EDF6" font-size="9" font-family="Consolas,Menlo,monospace">${val.toFixed(1)}</text>`;
+    const dateLbl = `<text x="${(x+bw/2).toFixed(1)}" y="${(MT+cH+13).toFixed(1)}" text-anchor="middle" fill="#4E6480" font-size="8" font-family="Consolas,Menlo,monospace">${b.date.slice(5)}</text>`;
+    const opp = b.event ? (b.event.includes(' @ ') ? b.event.split(' @ ')[1] : b.event).split(' ').pop() : '';
+    const oppLbl = opp ? `<text x="${(x+bw/2).toFixed(1)}" y="${(MT+cH+24).toFixed(1)}" text-anchor="middle" fill="#2D4060" font-size="7" font-family="Consolas,Menlo,monospace">${opp}</text>` : '';
+    return `<rect x="${x.toFixed(1)}" y="${barTop.toFixed(1)}" width="${bw.toFixed(1)}" height="${barH.toFixed(1)}" rx="3" fill="${col}" fill-opacity=".9"/>${valLbl}${dateLbl}${oppLbl}`;
+  }).join('');
+  // Threshold line
+  const lineY = sy(thresh);
+  const thrLine = `<line x1="${ML}" y1="${lineY.toFixed(1)}" x2="${ML+cW}" y2="${lineY.toFixed(1)}" stroke="white" stroke-width="1.5"/>
+  <text x="${(ML-4)}" y="${(lineY+3).toFixed(1)}" text-anchor="end" fill="#E8A830" font-size="9" font-weight="bold" font-family="Consolas,Menlo,monospace">${thresh}</text>`;
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;overflow:visible">${grid}${bars}${thrLine}</svg>`;
+}
+
+function renderDetailView() {
+  if (activeIdx < 0) return;
+  const pd = propList[activeIdx];
+  const tfs = ['L5','L10','L15','all'];
+  const tfLbls = {L5:'L5',L10:'L10',L15:'L15',all:'2025'};
+  // Timeframe buttons with hit rates
+  document.getElementById('detail-tf-row').innerHTML = tfs.map(tf => {
+    const sl2 = getSlice(pd.bets, tf);
+    const hr = hitRate(sl2);
+    const hrTxt = hr !== null ? hr + '%' : '—';
+    return `<button class="detail-tf-btn${tf===propTf?' active':''}" onclick="setDetailTf('${tf}')">
+      <div class="detail-tf-lbl">${tfLbls[tf]}</div>
+      <div class="detail-tf-rate" style="color:${rateColor(hr)}">${hrTxt}</div>
+    </button>`;
+  }).join('');
+  // AVG badge
+  const slice = getSlice(pd.bets, propTf);
+  const avg = avgProj(slice);
+  document.getElementById('detail-avg').textContent = avg !== null ? 'AVG: ' + avg.toFixed(1) : '';
+  // Chart
+  document.getElementById('detail-chart-wrap').innerHTML = renderDetailChart(slice, pd.threshold);
+  // Book row
+  const recent = pd.bets[pd.bets.length - 1];
+  const sl = STAT_LABELS[pd.stat] || pd.stat.replace(/^(Batter|Pitcher)\s+/, '');
+  document.getElementById('detail-book-row').innerHTML = `<div class="detail-book">
+    <span class="detail-book-label">${recent ? recent.book : '?'}</span>
+    <span class="detail-book-line">${recent ? recent.line : '?'}</span>
+    <span class="detail-book-desc">${pd.side==='O'?'Over':'Under'} ${pd.threshold} ${sl}</span>
+  </div>`;
+}
+
+function openDetail(idx) {
+  activeIdx = idx;
+  const pd = propList[idx];
+  document.getElementById('props-list-view').style.display = 'none';
+  document.getElementById('props-detail-view').style.display = '';
+  const sl = STAT_LABELS[pd.stat] || pd.stat.replace(/^(Batter|Pitcher)\s+/, '');
+  document.getElementById('detail-player-name').textContent = pd.player;
+  document.getElementById('detail-prop-meta').textContent = (pd.side==='O'?'Over':'Under') + ' ' + pd.threshold + ' ' + sl;
+  renderDetailView();
+}
+
+function closeDetail() {
+  activeIdx = -1;
+  document.getElementById('props-list-view').style.display = '';
+  document.getElementById('props-detail-view').style.display = 'none';
+}
+
+function setDetailTf(tf) {
+  propTf = tf;
+  document.querySelectorAll('.prop-tf-btn').forEach(b => b.classList.toggle('active', b.dataset.tf === tf));
+  renderDetailView();
+}
+
+renderPropList();
 
 // ── Bet History ───────────────────────────────────────────────
 const bets = D.recent_bets;
