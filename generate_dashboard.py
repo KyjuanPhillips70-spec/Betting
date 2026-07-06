@@ -478,9 +478,9 @@ footer{
 .prop-tf-btn.active{background:rgba(90,122,232,.12);border-color:var(--mlb);color:var(--mlb)}
 /* List rows */
 .prop-rows{display:flex;flex-direction:column;background:var(--surf);border:1px solid var(--border);border-radius:var(--r-lg);overflow:hidden}
-.prop-row{display:flex;align-items:center;gap:.75rem;padding:.8rem .9rem;border-bottom:1px solid var(--border);cursor:pointer;transition:background .1s}
+.prop-row{display:flex;align-items:center;gap:.75rem;padding:.8rem .9rem;border-bottom:1px solid var(--border);cursor:pointer;transition:background .1s;width:100%;text-align:left;background:none;color:inherit;font:inherit;border-left:none;border-right:none;border-top:none;-webkit-tap-highlight-color:rgba(90,122,232,.15)}
 .prop-row:last-child{border-bottom:none}
-.prop-row:hover{background:rgba(255,255,255,.025)}
+.prop-row:hover,.prop-row:active{background:rgba(255,255,255,.04)}
 .prop-row-left{flex:1;min-width:0}
 .prop-row-name{font-size:.9rem;font-weight:700;color:var(--t1)}
 .prop-row-desc{font-size:.68rem;color:var(--t2);margin-top:.15rem;display:flex;align-items:center;gap:.35rem;flex-wrap:wrap}
@@ -965,7 +965,7 @@ function renderPropList() {
     const hrTxt = hr !== null ? hr + '%' : '—';
     const spark = miniSpark(pd.bets, propTf);
     const recent = pd.bets[pd.bets.length - 1];
-    return `<div class="prop-row" onclick="openDetail(${idx})">
+    return `<button class="prop-row" onclick="openDetail(${idx})">
       <div class="prop-row-left">
         <div class="prop-row-name">${pd.player}</div>
         <div class="prop-row-desc">
@@ -982,7 +982,7 @@ function renderPropList() {
         ${spark}
         <div class="prop-row-hit" style="color:${rateColor(hr)}">${hrTxt}</div>
       </div>
-    </div>`;
+    </button>`;
   }).join('');
 }
 
