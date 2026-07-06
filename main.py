@@ -519,8 +519,6 @@ def run_mlb(game_date: date | None = None, n_sims: int = 10_000) -> list[BetAler
                     prop_snaps  = parse_odds_to_snapshots([prop_event], "MLB")
                     prop_alerts = find_player_prop_edges(game, sim, prop_snaps)
                     for a in prop_alerts:
-                        a.projected_score = proj
-                    for a in prop_alerts:
                         try:
                             _dec = american_to_decimal(int(a.line))
                             _ev  = expected_value(a.model_prob, _dec)
@@ -537,7 +535,7 @@ def run_mlb(game_date: date | None = None, n_sims: int = 10_000) -> list[BetAler
                             "edge":            a.edge,
                             "stake_units":     a.stake_units,
                             "ev":              _ev,
-                            "projected_score": proj,
+                            "projected_score": a.projected_score,
                         })
                     all_alerts.extend(prop_alerts)
                     if prop_alerts:

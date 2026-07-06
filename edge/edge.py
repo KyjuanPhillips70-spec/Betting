@@ -47,6 +47,18 @@ PITCHER_PROP_MARKETS: dict[str, str] = {
     "pitcher_earned_runs":  "er",
 }
 
+# Human-readable labels for each stat key (used in projected_score)
+_STAT_LABELS: dict[str, str] = {
+    "hits":  "hits",
+    "tb":    "total bases",
+    "hr":    "HR",
+    "rbi":   "RBI",
+    "bb":    "walks",
+    "k":     "K",
+    "outs":  "outs",
+    "er":    "earned runs",
+}
+
 
 def _blend(model_p: float, fair_p: float) -> float:
     return MODEL_WEIGHT * model_p + (1.0 - MODEL_WEIGHT) * fair_p
@@ -363,12 +375,15 @@ def find_player_prop_edges(game: dict, sim: dict,
                 fair_over, fair_under = devig_two_way(best_over["price"],
                                                        best_under["price"])
                 mkt_label = market_key.replace("_", " ").title()
+                stat_label = _STAT_LABELS.get(stat_key, stat_key)
+                proj_stat = f"Proj: {stat_arr.mean():.1f} {stat_label}"
                 for side, mp, fp, snap in [
                     (f"{player_name} {mkt_label} O{line}", model_over,  fair_over,  best_over),
                     (f"{player_name} {mkt_label} U{line}", model_under, fair_under, best_under),
                 ]:
                     a = _make_alert("MLB", event, side, mp, fp, snap)
                     if a:
+                        a.projected_score = proj_stat
                         alerts.append(a)
 
     return alerts
