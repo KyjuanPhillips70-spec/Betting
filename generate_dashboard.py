@@ -125,7 +125,7 @@ def _mlb_hand_splits(pid, group, stat_key, season=2025):
                     "avg":  s.get("avg", "---"),
                     "ops":  s.get("ops", "---"),
                     "stat": s.get(stat_key, 0),
-                    "ab":   s.get("atBats") or s.get("battersFaced", 0),
+                    "ab":   s.get("atBats") if s.get("atBats") is not None else s.get("battersFaced", 0),
                 }
     return out
 
@@ -637,6 +637,9 @@ footer{
 .split-ops{font-size:.72rem;color:var(--t2);font-family:'Consolas','Menlo',monospace;margin-top:.15rem}
 .split-stat{font-size:.82rem;font-weight:700;color:var(--amber);font-family:'Consolas','Menlo',monospace;margin-top:.25rem}
 .split-meta{font-size:.62rem;color:var(--tm);margin-top:.2rem}
+.split-support-badge{display:inline-block;font-size:.48rem;font-weight:800;letter-spacing:.07em;text-transform:uppercase;padding:.15rem .4rem;border-radius:3px;margin-bottom:.35rem;font-family:'Consolas','Menlo',monospace}
+.split-support-yes{background:rgba(74,222,128,.15);color:var(--win)}
+.split-support-no{background:rgba(248,113,113,.15);color:var(--loss)}
 .detail-tf-row{display:flex;gap:0;border:1px solid var(--border);border-radius:var(--r-lg);overflow:hidden;margin-bottom:.75rem}
 .detail-tf-btn{flex:1;background:none;border:none;border-right:1px solid var(--border);padding:.55rem .25rem;cursor:pointer;font-family:inherit;text-align:center;transition:background .1s}
 .detail-tf-btn:last-child{border-right:none}
@@ -1154,7 +1157,7 @@ function renderSeasonChart(games, thresh, side) {
   const cW = W - ML - MR;
   const bw = (cW - (n-1)*3) / n;
   const vals = valid.map(g => g.val);
-  const maxV = Math.max(...vals, thresh) * 1.28;
+  const maxV = Math.max(Math.max(...vals, thresh) * 1.28, 1);
   function sy(v) { return MT + cH - (v / maxV * cH); }
   const gridVals = [0, +(thresh/2).toFixed(1), thresh, +(maxV*0.78).toFixed(1)];
   const grid = [...new Set(gridVals)].map(v => {
@@ -1202,7 +1205,7 @@ function renderDetailChart(bets, thresh) {
   let bars = bets.map((b, i) => {
     const x = ML + i*(bw+3);
     const val = b.proj_stat!=null ? b.proj_stat : thresh;
-    const barTop = sy(val), barH = cH-(barTop-MT);
+    const barTop = sy(val), barH = Math.max(2, cH-(barTop-MT));
     const col = b.result==='win'?'#4ADE80':b.result==='loss'?'#F87171':'#4E6480';
     const valLbl = `<text x="${(x+bw/2).toFixed(1)}" y="${(barTop-4).toFixed(1)}" text-anchor="middle" fill="#E8EDF6" font-size="9" font-family="Consolas,Menlo,monospace">${val.toFixed(1)}</text>`;
     const dateLbl = `<text x="${(x+bw/2).toFixed(1)}" y="${(MT+cH+13).toFixed(1)}" text-anchor="middle" fill="#4E6480" font-size="8" font-family="Consolas,Menlo,monospace">${b.date.slice(5)}</text>`;
@@ -1225,7 +1228,7 @@ function renderDetailView() {
   const hasSeasonData = seasonGames.length > 0;
   const sl  = STAT_LABELS[pd.stat] || pd.stat.replace(/^(Batter|Pitcher)\s+/, '');
 
-  // ── Prop selector dropdown (switch between markets for same player) ──
+  // ── Prop selector dropdown ──
   const playerIdxs = propsByPlayer[pd.player] || [activeIdx];
   const selectorEl = document.getElementById('detail-prop-selector');
   if (selectorEl) {
@@ -1235,10 +1238,14 @@ function renderDetailView() {
             const p = propList[i];
             const lbl = STAT_LABELS[p.stat] || p.stat.replace(/^(Batter|Pitcher)\s+/, '');
             return `<option value="${i}"${i===activeIdx?' selected':''}>${lbl} · ${p.side==='O'?'Over':'Under'} ${p.threshold}</option>`;
-          }).join('') +
-        `</select>`
+          }).join('') + `</select>`
       : '';
   }
+
+  // FIX: pre-compute opps and init h2hOpp BEFORE timeframe buttons are built
+  // so H2H hit-rate is correct on the very first render
+  const opps = hasSeasonData ? [...new Set(seasonGames.filter(g=>g.opp).map(g=>g.opp))].sort() : [];
+  if (propTf === 'h2h' && !h2hOpp && opps.length) h2hOpp = opps[0];
 
   // ── Timeframe buttons (L5/L10/L15/2025/H2H) ──
   const tfs = ['L5','L10','L15','all','h2h'];
@@ -1263,19 +1270,16 @@ function renderDetailView() {
     </button>`;
   }).join('');
 
-  // ── H2H opponent chip row ──
+  // ── H2H opponent chip row ── (FIX: data-opp avoids special-char injection in onclick)
   const h2hEl = document.getElementById('detail-h2h-row');
   if (propTf === 'h2h' && hasSeasonData) {
-    const opps = [...new Set(seasonGames.filter(g=>g.opp).map(g=>g.opp))].sort();
-    if (!h2hOpp && opps.length) h2hOpp = opps[0];
     h2hEl.style.display = '';
     h2hEl.innerHTML = opps.length
       ? `<div class="h2h-opp-row">` +
           opps.map(opp => {
             const oppGames = seasonGames.filter(g => g.opp === opp && g.val != null);
-            return `<button class="h2h-opp-btn${opp===h2hOpp?' active':''}" onclick="setH2hOpp('${opp}')">${opp} <span style="opacity:.55;font-weight:400">${oppGames.length}G</span></button>`;
-          }).join('') +
-        `</div>`
+            return `<button class="h2h-opp-btn${opp===h2hOpp?' active':''}" data-opp="${opp}" onclick="setH2hOpp(this.dataset.opp)">${opp} <span style="opacity:.55;font-weight:400">${oppGames.length}G</span></button>`;
+          }).join('') + `</div>`
       : `<div class="h2h-no-data">No opponent data available</div>`;
   } else {
     h2hEl.style.display = 'none';
@@ -1301,7 +1305,7 @@ function renderDetailView() {
     document.getElementById('detail-chart-wrap').innerHTML = renderDetailChart(betSlice, pd.threshold);
   }
 
-  // ── Bat vs Pitch splits ──
+  // ── Bat vs Pitch splits with color-coded support/oppose overlay ──
   const splitsEl = document.getElementById('detail-splits-row');
   const splits = seasonData.splits || {};
   const splitEntries = Object.entries(splits);
@@ -1309,10 +1313,22 @@ function renderDetailView() {
     splitsEl.innerHTML = `<div class="sec" style="margin:.85rem 0 .5rem"><h2>Bat vs Pitch</h2><div class="sec-rule"></div></div>
       <div class="splits-row">` +
       splitEntries.map(([hand, s]) => {
-        const perG = s.g>0 ? (s.stat/s.g).toFixed(2) : '—';
+        const perGNum = s.g > 0 ? s.stat / s.g : null;
+        const perG    = perGNum !== null ? perGNum.toFixed(2) : '—';
+        // Does this split trend support the prop direction?
+        const supports = perGNum !== null
+          ? (pd.side === 'O' ? perGNum >= pd.threshold : perGNum <= pd.threshold)
+          : null;
+        const borderCol = supports === true  ? 'var(--win)'  : supports === false ? 'var(--loss)' : 'var(--border)';
+        const badge = supports === true
+          ? `<div class="split-support-badge split-support-yes">&#10003; Supports ${pd.side==='O'?'Over':'Under'}</div>`
+          : supports === false
+          ? `<div class="split-support-badge split-support-no">&#8593; Opposes ${pd.side==='O'?'Over':'Under'}</div>`
+          : '';
         const avgRow = s.avg && s.avg!=='---' ? `<div class="split-avg">${s.avg}</div><div class="split-ops">OPS ${s.ops||'---'}</div>` : '';
-        return `<div class="split-card">
+        return `<div class="split-card" style="box-shadow:inset 3px 0 0 ${borderCol};border-color:${borderCol}">
           <div class="split-title">${hand}</div>
+          ${badge}
           ${avgRow}
           <div class="split-stat">${s.stat} ${sl}</div>
           <div class="split-meta">${s.g} G &middot; ${perG}/G</div>
@@ -1334,6 +1350,7 @@ function renderDetailView() {
 function openDetail(idx) {
   activeIdx = idx;
   h2hOpp = null;
+  if (propTf === 'h2h') propTf = 'L10';
   const pd = propList[idx];
   document.getElementById('props-list-view').style.display = 'none';
   document.getElementById('props-detail-view').style.display = '';
@@ -1346,6 +1363,7 @@ function openDetail(idx) {
 function closeDetail() {
   activeIdx = -1;
   h2hOpp = null;
+  if (propTf === 'h2h') propTf = 'L10';
   document.getElementById('props-list-view').style.display = '';
   document.getElementById('props-detail-view').style.display = 'none';
 }
