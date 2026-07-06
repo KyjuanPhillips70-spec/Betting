@@ -153,6 +153,55 @@ def fetch_player_seasons(prop_bets, season=2025):
     return seen
 
 
+def fetch_all_player_stats(season=2025):
+    """Bulk fetch all active MLB players: batters (PA≥30) and pitchers (IP≥5)."""
+    result = {}
+    # Batters
+    data = _mlb_get("/stats", {"stats": "season", "group": "hitting",
+                                "season": season, "sportId": 1, "limit": 1000, "gameType": "R"})
+    for blk in (data.get("stats") or []):
+        for sp in (blk.get("splits") or []):
+            p = sp.get("player", {}); s = sp.get("stat", {}); t = (sp.get("team") or {})
+            pid = p.get("id")
+            if not pid or s.get("plateAppearances", 0) < 30:
+                continue
+            result[str(pid)] = {
+                "pid": pid, "name": p.get("fullName", ""),
+                "team": t.get("abbreviation", ""), "pos": "B",
+                "g": s.get("gamesPlayed", 0), "pa": s.get("plateAppearances", 0),
+                "hits": s.get("hits", 0), "totalBases": s.get("totalBases", 0),
+                "homeRuns": s.get("homeRuns", 0), "rbi": s.get("rbi", 0),
+                "bb": s.get("baseOnBalls", 0), "k": s.get("strikeOuts", 0),
+                "avg": s.get("avg", "---"), "ops": s.get("ops", "---"),
+            }
+    # Pitchers
+    data = _mlb_get("/stats", {"stats": "season", "group": "pitching",
+                                "season": season, "sportId": 1, "limit": 1000, "gameType": "R"})
+    for blk in (data.get("stats") or []):
+        for sp in (blk.get("splits") or []):
+            p = sp.get("player", {}); s = sp.get("stat", {}); t = (sp.get("team") or {})
+            pid = p.get("id")
+            if not pid:
+                continue
+            try:
+                ip = float(s.get("inningsPitched") or 0)
+            except (ValueError, TypeError):
+                ip = 0.0
+            if ip < 5:
+                continue
+            pid_str = str(pid)
+            if pid_str not in result:
+                result[pid_str] = {
+                    "pid": pid, "name": p.get("fullName", ""),
+                    "team": t.get("abbreviation", ""), "pos": "P",
+                    "g": s.get("gamesPlayed", 0), "ip": s.get("inningsPitched", "0.0"),
+                    "pK": s.get("strikeOuts", 0), "pH": s.get("hits", 0),
+                    "pBB": s.get("baseOnBalls", 0), "pER": s.get("earnedRuns", 0),
+                    "era": s.get("era", "---"), "whip": s.get("whip", "---"),
+                }
+    return result
+
+
 def read_db(db_path: str) -> dict:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -280,6 +329,13 @@ def read_db(db_path: str) -> dict:
         print(f"Warning: MLB API fetch failed: {exc}")
         player_seasons = {}
 
+    # Bulk fetch all active MLB players for encyclopedia view
+    try:
+        all_player_stats = fetch_all_player_stats()
+    except Exception as exc:
+        print(f"Warning: bulk player stats fetch failed: {exc}")
+        all_player_stats = {}
+
     return {
         "generated_at":   datetime.now().strftime("%Y-%m-%d %H:%M:%S ET"),
         "today":          today_str,
@@ -290,6 +346,7 @@ def read_db(db_path: str) -> dict:
         "sports":         sports,
         "prop_bets":      prop_bets,
         "player_seasons": player_seasons,
+        "all_player_stats": all_player_stats,
         "stats": {
             "total_picks":    len(bets),
             "n_resolved":     n_resolved,
@@ -658,6 +715,18 @@ footer{
 .h2h-opp-btn.active{background:rgba(90,122,232,.15);border-color:var(--mlb);color:var(--mlb)}
 .h2h-no-data{padding:.75rem;font-size:.75rem;color:var(--tm);text-align:center}
 
+/* O/U side toggle */
+.side-toggle{display:flex;gap:.3rem;margin-top:.45rem}
+.side-btn{background:var(--surf2);border:1px solid var(--border);border-radius:var(--r);padding:.28rem .7rem;font-size:.68rem;font-weight:700;cursor:pointer;font-family:inherit;text-transform:uppercase;letter-spacing:.05em;color:var(--t2);transition:all .15s}
+.side-btn.over.active{background:rgba(74,222,128,.15);border-color:var(--win);color:var(--win)}
+.side-btn.under.active{background:rgba(248,113,113,.15);border-color:var(--loss);color:var(--loss)}
+/* Stats-only roster row */
+.stats-row-team{display:inline-flex;align-items:center;padding:.1rem .35rem;border-radius:3px;font-size:.58rem;font-weight:700;background:rgba(90,122,232,.1);color:var(--mlb);border:1px solid rgba(90,122,232,.2);font-family:'Consolas','Menlo',monospace;margin-left:.3rem}
+/* Async loading state */
+.detail-loading{display:flex;align-items:center;justify-content:center;height:120px;color:var(--tm);font-size:.82rem;gap:.5rem}
+.detail-spinner{width:16px;height:16px;border:2px solid var(--border2);border-top-color:var(--mlb);border-radius:50%;animation:spin .6s linear infinite;flex-shrink:0}
+@keyframes spin{to{transform:rotate(360deg)}}
+
 /* ── Mobile (≤540px — iPhone 13 and similar) ── */
 @media(max-width:540px){
   .shell{padding:.75rem .85rem 2.5rem}
@@ -792,6 +861,7 @@ footer{
         <div class="detail-player" id="detail-player-name"></div>
         <div class="detail-prop-meta" id="detail-prop-meta"></div>
         <div id="detail-prop-selector" style="margin-top:.5rem"></div>
+        <div id="detail-side-toggle" class="side-toggle"></div>
       </div>
       <div class="detail-avg" id="detail-avg"></div>
     </div>
@@ -1010,6 +1080,14 @@ const STAT_LABELS = {
   'Pitcher Strikeouts':'K','Pitcher Outs':'Outs',
   'Pitcher Hits Allowed':'H Allow','Pitcher Walks':'BB Allow','Pitcher Earned Runs':'ER',
 };
+const BATTER_PROP_TYPES = ['Batter Hits','Batter Total Bases','Batter Home Runs','Batter Rbis','Batter Walks','Batter Strikeouts'];
+const PITCHER_PROP_TYPES = ['Pitcher Strikeouts','Pitcher Outs','Pitcher Hits Allowed','Pitcher Walks','Pitcher Earned Runs'];
+const STAT_KEYS = {
+  'Batter Hits':'hits','Batter Total Bases':'totalBases','Batter Home Runs':'homeRuns',
+  'Batter Rbis':'rbi','Batter Walks':'baseOnBalls','Batter Strikeouts':'strikeOuts',
+  'Pitcher Strikeouts':'strikeOuts','Pitcher Outs':'outs',
+  'Pitcher Hits Allowed':'hits','Pitcher Walks':'baseOnBalls','Pitcher Earned Runs':'earnedRuns',
+};
 
 // Build unique player+stat profiles
 const propList = [];
@@ -1033,10 +1111,27 @@ propList.forEach((pd, idx) => {
   propsByPlayer[pd.player].push(idx);
 });
 
+// Combined roster: bet-tracked props first, then all active MLB players not already tracked
+const masterDisplayList = [];
+propList.forEach((pd, i) => masterDisplayList.push({type:'bet', propIdx:i, player:pd.player}));
+const _trackedNames = new Set(propList.map(pd => pd.player.toLowerCase()));
+Object.values(D.all_player_stats || {})
+  .sort((a,b) => a.name.localeCompare(b.name))
+  .forEach(ps => {
+    if (!_trackedNames.has(ps.name.toLowerCase())) {
+      masterDisplayList.push(Object.assign({type:'stats'}, ps));
+    }
+  });
+
 let propStatFilter = 'all';
 let propTf = 'L10';
 let activeIdx = -1;
+let activeStatsEntry = null;
+let activeStatType = null;
+let activeGameLog = null;
 let h2hOpp = null;
+let viewSide = null;
+const _glCache = {};
 
 // Build stat filter chips
 (function(){
@@ -1099,48 +1194,119 @@ function miniSpark(bets, tf) {
   return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${s}</svg>`;
 }
 
+async function fetchGameLogClient(pid, statType) {
+  const key = pid + '||' + statType;
+  if (_glCache[key]) return _glCache[key];
+  const isPitcher = statType.startsWith('Pitcher');
+  const group = isPitcher ? 'pitching' : 'hitting';
+  const statKey = STAT_KEYS[statType];
+  try {
+    const url = `https://statsapi.mlb.com/api/v1/people/${pid}/stats?stats=gameLog&season=2025&group=${group}&gameType=R`;
+    const res = await fetch(url);
+    const data = await res.json();
+    const games = [];
+    for (const blk of (data.stats || [])) {
+      for (const sp of (blk.splits || [])) {
+        const s = sp.stat || {};
+        const opp = sp.opponent || {};
+        const val = s[statKey];
+        games.push({date:(sp.date||'').slice(0,10), opp:opp.abbreviation||opp.teamName||'', val:val!=null?parseFloat(val):null});
+      }
+    }
+    _glCache[key] = games;
+    return games;
+  } catch(e) {
+    _glCache[key] = [];
+    return [];
+  }
+}
+
+function setViewSide(s) {
+  viewSide = s;
+  renderDetailView();
+}
+
+async function switchStatsProp(statType) {
+  if (!activeStatsEntry) return;
+  const entry = activeStatsEntry;
+  activeStatType = statType;
+  activeGameLog = null;
+  document.getElementById('detail-chart-wrap').innerHTML = '<div class="detail-loading"><div class="detail-spinner"></div>Loading game log…</div>';
+  document.getElementById('detail-avg').textContent = '';
+  document.getElementById('detail-tf-row').innerHTML = '';
+  document.getElementById('detail-h2h-row').style.display = 'none';
+  activeGameLog = await fetchGameLogClient(entry.pid, statType);
+  if (activeStatsEntry === entry && activeStatType === statType) renderDetailView();
+}
+
 function renderPropList() {
   const query = (document.getElementById('prop-search')?.value || '').toLowerCase().trim();
   const rowsEl = document.getElementById('prop-rows');
   const noData = document.getElementById('prop-no-data');
-  const filtered = propList.filter(pd => {
-    if (query && !pd.player.toLowerCase().includes(query)) return false;
-    if (propStatFilter !== 'all' && pd.stat !== propStatFilter) return false;
+  const filtered = masterDisplayList.filter(entry => {
+    if (query && !entry.player.toLowerCase().includes(query)) return false;
+    if (entry.type === 'bet' && propStatFilter !== 'all') {
+      if (propList[entry.propIdx].stat !== propStatFilter) return false;
+    }
     return true;
   });
   if (!filtered.length) {
     noData.style.display = '';
-    noData.textContent = propBets.length ? 'No props match your filters.' : 'No player prop bets recorded yet — props appear after the next daily card run.';
+    noData.textContent = masterDisplayList.length ? 'No props match your filters.' : 'No player prop data available.';
     rowsEl.innerHTML = '';
     return;
   }
   noData.style.display = 'none';
-  rowsEl.innerHTML = filtered.map(pd => {
-    const idx = propList.indexOf(pd);
-    const sl = STAT_LABELS[pd.stat] || pd.stat.replace(/^(Batter|Pitcher)\s+/, '');
-    const slice = getSlice(pd.bets, propTf);
-    const hr = hitRate(slice);
-    const hrTxt = hr !== null ? hr + '%' : '—';
-    const spark = miniSpark(pd.bets, propTf);
-    const recent = pd.bets[pd.bets.length - 1];
-    return `<button class="prop-row" onclick="openDetail(${idx})">
-      <div class="prop-row-left">
-        <div class="prop-row-name">${pd.player}</div>
-        <div class="prop-row-desc">
-          <span class="stat-chip-sm">${sl}</span>
-          ${pd.side==='O'?'Over':'Under'} ${pd.threshold}
-          <span class="prop-row-odds">${recent ? recent.line : ''}</span>
+  rowsEl.innerHTML = filtered.map(entry => {
+    const midx = masterDisplayList.indexOf(entry);
+    if (entry.type === 'bet') {
+      const pd = propList[entry.propIdx];
+      const sl = STAT_LABELS[pd.stat] || pd.stat.replace(/^(Batter|Pitcher)\s+/, '');
+      const slice = getSlice(pd.bets, propTf);
+      const hr = hitRate(slice);
+      const hrTxt = hr !== null ? hr + '%' : '—';
+      const spark = miniSpark(pd.bets, propTf);
+      const recent = pd.bets[pd.bets.length - 1];
+      return `<button class="prop-row" onclick="openDetailMaster(${midx})">
+        <div class="prop-row-left">
+          <div class="prop-row-name">${pd.player}</div>
+          <div class="prop-row-desc">
+            <span class="stat-chip-sm">${sl}</span>
+            ${pd.side==='O'?'Over':'Under'} ${pd.threshold}
+            <span class="prop-row-odds">${recent ? recent.line : ''}</span>
+          </div>
         </div>
-      </div>
-      <div class="prop-row-mid">
-        <div class="prop-row-edge">+${pd.edge}%</div>
-        <div class="prop-row-edge-lbl">EDGE</div>
-      </div>
-      <div class="prop-row-right">
-        ${spark}
-        <div class="prop-row-hit" style="color:${rateColor(hr)}">${hrTxt}</div>
-      </div>
-    </button>`;
+        <div class="prop-row-mid">
+          <div class="prop-row-edge">+${pd.edge}%</div>
+          <div class="prop-row-edge-lbl">EDGE</div>
+        </div>
+        <div class="prop-row-right">
+          ${spark}
+          <div class="prop-row-hit" style="color:${rateColor(hr)}">${hrTxt}</div>
+        </div>
+      </button>`;
+    } else {
+      const isPitcher = entry.pos === 'P';
+      const keyStats = isPitcher
+        ? `ERA ${entry.era||'---'} · ${entry.pK||0}K · WHIP ${entry.whip||'---'}`
+        : `AVG ${entry.avg||'---'} · ${entry.homeRuns||0}HR · ${entry.k||0}K`;
+      const vol = isPitcher ? `${entry.g||0}G · ${entry.ip||'0'}IP` : `${entry.g||0}G · ${entry.pa||0}PA`;
+      return `<button class="prop-row" onclick="openDetailMaster(${midx})">
+        <div class="prop-row-left">
+          <div class="prop-row-name">${entry.player}<span class="stats-row-team">${entry.team||''} ${isPitcher?'P':'B'}</span></div>
+          <div class="prop-row-desc">
+            <span style="font-family:'Consolas','Menlo',monospace;font-size:.7rem">${keyStats}</span>
+            <span class="prop-row-odds">${vol}</span>
+          </div>
+        </div>
+        <div class="prop-row-mid">
+          <div style="font-size:.58rem;font-weight:800;color:var(--mlb);letter-spacing:.06em;text-transform:uppercase">Roster</div>
+        </div>
+        <div class="prop-row-right">
+          <div class="prop-row-hit" style="color:var(--tm)">—</div>
+        </div>
+      </button>`;
+    }
   }).join('');
 }
 
@@ -1220,30 +1386,67 @@ function renderDetailChart(bets, thresh) {
 }
 
 function renderDetailView() {
-  if (activeIdx < 0) return;
-  const pd  = propList[activeIdx];
-  const key = pd.player + '||' + pd.stat;
-  const seasonData  = (D.player_seasons || {})[key] || {games:[],splits:{}};
-  const seasonGames = seasonData.games || [];
-  const hasSeasonData = seasonGames.length > 0;
-  const sl  = STAT_LABELS[pd.stat] || pd.stat.replace(/^(Batter|Pitcher)\s+/, '');
+  const isStatsOnly = activeStatsEntry !== null;
+  if (!isStatsOnly && activeIdx < 0) return;
+  if (isStatsOnly && !activeGameLog) return; // still loading
 
-  // ── Prop selector dropdown ──
-  const playerIdxs = propsByPlayer[pd.player] || [activeIdx];
-  const selectorEl = document.getElementById('detail-prop-selector');
-  if (selectorEl) {
-    selectorEl.innerHTML = playerIdxs.length > 1
-      ? `<select class="detail-prop-select" onchange="switchProp(this.value)">` +
-          playerIdxs.map(i => {
-            const p = propList[i];
-            const lbl = STAT_LABELS[p.stat] || p.stat.replace(/^(Batter|Pitcher)\s+/, '');
-            return `<option value="${i}"${i===activeIdx?' selected':''}>${lbl} · ${p.side==='O'?'Over':'Under'} ${p.threshold}</option>`;
-          }).join('') + `</select>`
-      : '';
+  // ── Resolve context ──
+  let pd, seasonGames, seasonData;
+  if (isStatsOnly) {
+    const validVals = activeGameLog.filter(g=>g.val!=null).map(g=>g.val);
+    const seasonAvg = validVals.length ? validVals.reduce((a,b)=>a+b,0)/validVals.length : 0;
+    const thresh = Math.max(0.5, Math.round(seasonAvg * 2) / 2);
+    pd = {player:activeStatsEntry.player, stat:activeStatType, side:'O', threshold:thresh, bets:[], line:'—', book:'—'};
+    seasonData = {games: activeGameLog, splits: {}};
+    seasonGames = activeGameLog;
+  } else {
+    pd = propList[activeIdx];
+    const key = pd.player + '||' + pd.stat;
+    seasonData = (D.player_seasons || {})[key] || {games:[],splits:{}};
+    seasonGames = seasonData.games || [];
   }
 
-  // FIX: pre-compute opps and init h2hOpp BEFORE timeframe buttons are built
-  // so H2H hit-rate is correct on the very first render
+  const effSide = viewSide || pd.side;
+  const hasSeasonData = seasonGames.length > 0;
+  const sl = STAT_LABELS[pd.stat] || pd.stat.replace(/^(Batter|Pitcher)\s+/, '');
+
+  // ── O/U toggle ──
+  const toggleEl = document.getElementById('detail-side-toggle');
+  if (toggleEl) {
+    toggleEl.innerHTML =
+      `<button class="side-btn over${effSide==='O'?' active':''}" onclick="setViewSide('O')">Over</button>` +
+      `<button class="side-btn under${effSide==='U'?' active':''}" onclick="setViewSide('U')">Under</button>`;
+  }
+
+  // ── Prop selector dropdown ──
+  const selectorEl = document.getElementById('detail-prop-selector');
+  if (selectorEl) {
+    if (isStatsOnly) {
+      const propTypes = activeStatsEntry.pos === 'P' ? PITCHER_PROP_TYPES : BATTER_PROP_TYPES;
+      selectorEl.innerHTML = `<select class="detail-prop-select" onchange="switchStatsProp(this.value)">` +
+        propTypes.map(st => {
+          const lbl = STAT_LABELS[st] || st.replace(/^(Batter|Pitcher)\s+/,'');
+          return `<option value="${st}"${st===activeStatType?' selected':''}>${lbl}</option>`;
+        }).join('') + `</select>`;
+    } else {
+      const playerIdxs = propsByPlayer[pd.player] || [activeIdx];
+      selectorEl.innerHTML = playerIdxs.length > 1
+        ? `<select class="detail-prop-select" onchange="switchProp(this.value)">` +
+            playerIdxs.map(i => {
+              const p = propList[i];
+              const lbl = STAT_LABELS[p.stat] || p.stat.replace(/^(Batter|Pitcher)\s+/, '');
+              return `<option value="${i}"${i===activeIdx?' selected':''}>${lbl} · ${p.side==='O'?'Over':'Under'} ${p.threshold}</option>`;
+            }).join('') + `</select>`
+        : '';
+    }
+  }
+
+  // Update prop-meta to reflect effective side
+  if (!isStatsOnly) {
+    document.getElementById('detail-prop-meta').textContent = (effSide==='O'?'Over':'Under') + ' ' + pd.threshold + ' ' + sl;
+  }
+
+  // Pre-compute opps and init h2hOpp BEFORE TF buttons so H2H rate is correct on first render
   const opps = hasSeasonData ? [...new Set(seasonGames.filter(g=>g.opp).map(g=>g.opp))].sort() : [];
   if (propTf === 'h2h' && !h2hOpp && opps.length) h2hOpp = opps[0];
 
@@ -1256,8 +1459,16 @@ function renderDetailView() {
     if (tf === 'h2h') {
       if (hasSeasonData && h2hOpp) {
         const oppGames = seasonGames.filter(g => g.opp === h2hOpp && g.val != null);
-        const hits = oppGames.filter(g => pd.side==='O' ? g.val >= pd.threshold : g.val <= pd.threshold).length;
+        const hits = oppGames.filter(g => effSide==='O' ? g.val >= pd.threshold : g.val <= pd.threshold).length;
         if (oppGames.length) { hr = Math.round(hits/oppGames.length*100); hrTxt = hr+'%'; }
+      }
+    } else if (isStatsOnly && hasSeasonData) {
+      const limit = tfN[tf] || 9999;
+      const slice = limit < 9999 ? seasonGames.slice(-limit) : seasonGames;
+      const valid = slice.filter(g=>g.val!=null);
+      if (valid.length) {
+        const hits = valid.filter(g => effSide==='O' ? g.val >= pd.threshold : g.val <= pd.threshold).length;
+        hr = Math.round(hits/valid.length*100); hrTxt = hr+'%';
       }
     } else {
       const betSlice = getSlice(pd.bets, tf);
@@ -1270,7 +1481,7 @@ function renderDetailView() {
     </button>`;
   }).join('');
 
-  // ── H2H opponent chip row ── (FIX: data-opp avoids special-char injection in onclick)
+  // ── H2H opponent chip row ──
   const h2hEl = document.getElementById('detail-h2h-row');
   if (propTf === 'h2h' && hasSeasonData) {
     h2hEl.style.display = '';
@@ -1297,7 +1508,7 @@ function renderDetailView() {
     const validVals = chartGames.filter(g=>g.val!=null).map(g=>g.val);
     const avg = validVals.length ? (validVals.reduce((a,b)=>a+b,0)/validVals.length) : null;
     document.getElementById('detail-avg').textContent = avg!=null ? 'AVG: '+avg.toFixed(1) : '';
-    document.getElementById('detail-chart-wrap').innerHTML = renderSeasonChart(chartGames, pd.threshold, pd.side);
+    document.getElementById('detail-chart-wrap').innerHTML = renderSeasonChart(chartGames, pd.threshold, effSide);
   } else {
     const betSlice = getSlice(pd.bets, propTf === 'h2h' ? 'all' : propTf);
     const avg = avgProj(betSlice);
@@ -1305,9 +1516,9 @@ function renderDetailView() {
     document.getElementById('detail-chart-wrap').innerHTML = renderDetailChart(betSlice, pd.threshold);
   }
 
-  // ── Bat vs Pitch splits with color-coded support/oppose overlay ──
+  // ── Bat vs Pitch splits (bet-tracked only) ──
   const splitsEl = document.getElementById('detail-splits-row');
-  const splits = seasonData.splits || {};
+  const splits = isStatsOnly ? {} : (seasonData.splits || {});
   const splitEntries = Object.entries(splits);
   if (splitsEl && splitEntries.length) {
     splitsEl.innerHTML = `<div class="sec" style="margin:.85rem 0 .5rem"><h2>Bat vs Pitch</h2><div class="sec-rule"></div></div>
@@ -1315,15 +1526,14 @@ function renderDetailView() {
       splitEntries.map(([hand, s]) => {
         const perGNum = s.g > 0 ? s.stat / s.g : null;
         const perG    = perGNum !== null ? perGNum.toFixed(2) : '—';
-        // Does this split trend support the prop direction?
         const supports = perGNum !== null
-          ? (pd.side === 'O' ? perGNum >= pd.threshold : perGNum <= pd.threshold)
+          ? (effSide === 'O' ? perGNum >= pd.threshold : perGNum <= pd.threshold)
           : null;
-        const borderCol = supports === true  ? 'var(--win)'  : supports === false ? 'var(--loss)' : 'var(--border)';
+        const borderCol = supports === true ? 'var(--win)' : supports === false ? 'var(--loss)' : 'var(--border)';
         const badge = supports === true
-          ? `<div class="split-support-badge split-support-yes">&#10003; Supports ${pd.side==='O'?'Over':'Under'}</div>`
+          ? `<div class="split-support-badge split-support-yes">&#10003; Supports ${effSide==='O'?'Over':'Under'}</div>`
           : supports === false
-          ? `<div class="split-support-badge split-support-no">&#8593; Opposes ${pd.side==='O'?'Over':'Under'}</div>`
+          ? `<div class="split-support-badge split-support-no">&#8593; Opposes ${effSide==='O'?'Over':'Under'}</div>`
           : '';
         const avgRow = s.avg && s.avg!=='---' ? `<div class="split-avg">${s.avg}</div><div class="split-ops">OPS ${s.ops||'---'}</div>` : '';
         return `<div class="split-card" style="box-shadow:inset 3px 0 0 ${borderCol};border-color:${borderCol}">
@@ -1338,31 +1548,69 @@ function renderDetailView() {
     splitsEl.innerHTML = '';
   }
 
-  // ── Book row ──
-  const recent = pd.bets[pd.bets.length-1];
-  document.getElementById('detail-book-row').innerHTML = `<div class="detail-book">
-    <span class="detail-book-label">${recent ? recent.book : '?'}</span>
-    <span class="detail-book-line">${recent ? recent.line : '?'}</span>
-    <span class="detail-book-desc">${pd.side==='O'?'Over':'Under'} ${pd.threshold} ${sl}</span>
-  </div>`;
+  // ── Book row (bet-tracked only) ──
+  if (!isStatsOnly) {
+    const recent = pd.bets[pd.bets.length-1];
+    document.getElementById('detail-book-row').innerHTML = `<div class="detail-book">
+      <span class="detail-book-label">${recent ? recent.book : '?'}</span>
+      <span class="detail-book-line">${recent ? recent.line : '?'}</span>
+      <span class="detail-book-desc">${effSide==='O'?'Over':'Under'} ${pd.threshold} ${sl}</span>
+    </div>`;
+  } else {
+    document.getElementById('detail-book-row').innerHTML = '';
+  }
 }
 
-function openDetail(idx) {
-  activeIdx = idx;
+async function openDetailMaster(midx) {
+  const entry = masterDisplayList[midx];
   h2hOpp = null;
+  viewSide = null;
   if (propTf === 'h2h') propTf = 'L10';
-  const pd = propList[idx];
   document.getElementById('props-list-view').style.display = 'none';
   document.getElementById('props-detail-view').style.display = '';
-  const sl = STAT_LABELS[pd.stat] || pd.stat.replace(/^(Batter|Pitcher)\s+/, '');
-  document.getElementById('detail-player-name').textContent = pd.player;
-  document.getElementById('detail-prop-meta').textContent = (pd.side==='O'?'Over':'Under') + ' ' + pd.threshold + ' ' + sl;
-  renderDetailView();
+  if (entry.type === 'bet') {
+    activeIdx = entry.propIdx;
+    activeStatsEntry = null;
+    activeStatType = null;
+    activeGameLog = null;
+    const pd = propList[activeIdx];
+    const sl = STAT_LABELS[pd.stat] || pd.stat.replace(/^(Batter|Pitcher)\s+/, '');
+    document.getElementById('detail-player-name').textContent = pd.player;
+    document.getElementById('detail-prop-meta').textContent = (pd.side==='O'?'Over':'Under') + ' ' + pd.threshold + ' ' + sl;
+    renderDetailView();
+  } else {
+    activeIdx = -1;
+    activeStatsEntry = entry;
+    activeStatType = entry.pos === 'P' ? 'Pitcher Strikeouts' : 'Batter Hits';
+    activeGameLog = null;
+    document.getElementById('detail-player-name').textContent = entry.player;
+    document.getElementById('detail-prop-meta').textContent = (entry.team||'') + (entry.pos==='P'?' · Pitcher':' · Batter');
+    document.getElementById('detail-avg').textContent = '';
+    document.getElementById('detail-chart-wrap').innerHTML = '<div class="detail-loading"><div class="detail-spinner"></div>Loading game log…</div>';
+    document.getElementById('detail-tf-row').innerHTML = '';
+    document.getElementById('detail-h2h-row').style.display = 'none';
+    document.getElementById('detail-splits-row').innerHTML = '';
+    document.getElementById('detail-book-row').innerHTML = '';
+    document.getElementById('detail-side-toggle').innerHTML = '';
+    const propTypes = entry.pos === 'P' ? PITCHER_PROP_TYPES : BATTER_PROP_TYPES;
+    document.getElementById('detail-prop-selector').innerHTML =
+      `<select class="detail-prop-select" onchange="switchStatsProp(this.value)">` +
+      propTypes.map(st => {
+        const lbl = STAT_LABELS[st] || st.replace(/^(Batter|Pitcher)\s+/,'');
+        return `<option value="${st}"${st===activeStatType?' selected':''}>${lbl}</option>`;
+      }).join('') + `</select>`;
+    activeGameLog = await fetchGameLogClient(entry.pid, activeStatType);
+    if (activeStatsEntry === entry) renderDetailView();
+  }
 }
 
 function closeDetail() {
   activeIdx = -1;
+  activeStatsEntry = null;
+  activeStatType = null;
+  activeGameLog = null;
   h2hOpp = null;
+  viewSide = null;
   if (propTf === 'h2h') propTf = 'L10';
   document.getElementById('props-list-view').style.display = '';
   document.getElementById('props-detail-view').style.display = 'none';
@@ -1376,7 +1624,9 @@ function setDetailTf(tf) {
 
 function switchProp(idxStr) {
   activeIdx = +idxStr;
+  activeStatsEntry = null;
   h2hOpp = null;
+  viewSide = null;
   const pd = propList[activeIdx];
   const sl = STAT_LABELS[pd.stat] || pd.stat.replace(/^(Batter|Pitcher)\s+/, '');
   document.getElementById('detail-prop-meta').textContent = (pd.side==='O'?'Over':'Under') + ' ' + pd.threshold + ' ' + sl;
@@ -1472,7 +1722,7 @@ def generate(db_path: str, out_path: str) -> None:
             "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S ET"),
             "today": date.today().isoformat(),
             "today_picks": [], "recent_bets": [], "daily_pnl": [],
-            "top_markets": [], "sports": [], "prop_bets": [], "player_seasons": {},
+            "top_markets": [], "sports": [], "prop_bets": [], "player_seasons": {}, "all_player_stats": {},
             "stats": {"total_picks":0,"n_resolved":0,"n_wins":0,"win_rate":0,
                       "roi":0,"total_profit":0,"avg_edge":0,"avg_clv":None},
         }
