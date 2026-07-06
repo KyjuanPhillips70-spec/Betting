@@ -169,9 +169,12 @@ def fetch_all_player_stats(season=2025):
         pos_abbr = (p.get("primaryPosition") or {}).get("abbreviation", "")
         is_pitcher = pos_abbr in _PITCHER_POS
         team = (p.get("currentTeam") or {}).get("abbreviation", "")
+        pitch_hand = (p.get("pitchHand") or {}).get("code", "")
+        bat_side   = (p.get("batSide")   or {}).get("code", "")
         result[str(pid)] = {
             "pid": pid, "name": p.get("fullName", ""),
             "team": team, "pos": "P" if is_pitcher else "B", "posDetail": pos_abbr,
+            "pitchHand": pitch_hand, "batSide": bat_side,
             "g": 0, "pa": 0, "homeRuns": 0, "k": 0,
             "avg": "---", "ops": "---",
             "ip": "0.0", "pK": 0, "era": "---", "whip": "---",
@@ -182,6 +185,7 @@ def fetch_all_player_stats(season=2025):
             result[pid_str] = {
                 "pid": int(pid_str), "name": name, "team": team,
                 "pos": pos, "posDetail": posDetail,
+                "pitchHand": "", "batSide": "",
                 "g": 0, "pa": 0, "homeRuns": 0, "k": 0,
                 "avg": "---", "ops": "---",
                 "ip": "0.0", "pK": 0, "era": "---", "whip": "---",
@@ -232,14 +236,14 @@ def fetch_all_player_stats(season=2025):
 
 
 def fetch_todays_lineups(today_str):
-    """Return player IDs confirmed in today's lineups + probable pitchers."""
+    """Return player IDs in today's lineups + per-game matchup detail."""
     data = _mlb_get("/schedule", {
         "sportId": 1, "date": today_str,
         "hydrate": "lineups,probablePitchers,team",
         "gameType": "R",
     })
-    player_ids = []
-    games = []
+    all_ids = []
+    games_detail = []
     for date_entry in (data.get("dates") or []):
         for game in (date_entry.get("games") or []):
             teams = game.get("teams") or {}
@@ -247,15 +251,26 @@ def fetch_todays_lineups(today_str):
             home_team = (home.get("team") or {}).get("abbreviation", "")
             away_team = (away.get("team") or {}).get("abbreviation", "")
             lineup = game.get("lineups") or {}
-            for pl in (lineup.get("homePlayers") or []) + (lineup.get("awayPlayers") or []):
-                if pl.get("id"):
-                    player_ids.append(pl["id"])
-            for side in (home, away):
-                pp = (side.get("probablePitcher") or {})
-                if pp.get("id"):
-                    player_ids.append(pp["id"])
-            games.append({"home": home_team, "away": away_team})
-    return {"player_ids": list(set(player_ids)), "games": games}
+            home_batters = [pl["id"] for pl in (lineup.get("homePlayers") or []) if pl.get("id")]
+            away_batters = [pl["id"] for pl in (lineup.get("awayPlayers") or []) if pl.get("id")]
+            home_pp_pid = (home.get("probablePitcher") or {}).get("id")
+            away_pp_pid = (away.get("probablePitcher") or {}).get("id")
+            all_ids.extend(home_batters + away_batters)
+            if home_pp_pid: all_ids.append(home_pp_pid)
+            if away_pp_pid: all_ids.append(away_pp_pid)
+            games_detail.append({
+                "home_team": home_team, "away_team": away_team,
+                "home_batter_pids": home_batters,
+                "away_batter_pids": away_batters,
+                "home_pitcher_pid": home_pp_pid,
+                "away_pitcher_pid": away_pp_pid,
+            })
+    return {
+        "player_ids": list(set(all_ids)),
+        "games": [{"home": g["home_team"], "away": g["away_team"]} for g in games_detail],
+        "games_detail": games_detail,
+        "matchups": {},  # filled in by read_db after all_player_stats is available
+    }
 
 
 def read_db(db_path: str) -> dict:
@@ -395,9 +410,35 @@ def read_db(db_path: str) -> dict:
     # Fetch today's confirmed lineups + probable pitchers
     try:
         today_lineups = fetch_todays_lineups(today_str)
+        # Build per-batter matchup dict: home pitcher faces away batters and vice versa
+        matchups = {}
+        for gd in today_lineups.get("games_detail", []):
+            hp_pid = gd.get("home_pitcher_pid")
+            ap_pid = gd.get("away_pitcher_pid")
+            # Home team's pitcher faces away team's batters
+            if hp_pid:
+                hp = all_player_stats.get(str(hp_pid), {})
+                for bpid in gd.get("away_batter_pids", []):
+                    matchups[str(bpid)] = {
+                        "pitcher_pid": hp_pid,
+                        "pitcher_name": hp.get("name", ""),
+                        "pitcher_hand": hp.get("pitchHand", ""),
+                        "opp_team": gd.get("home_team", ""),
+                    }
+            # Away team's pitcher faces home team's batters
+            if ap_pid:
+                ap = all_player_stats.get(str(ap_pid), {})
+                for bpid in gd.get("home_batter_pids", []):
+                    matchups[str(bpid)] = {
+                        "pitcher_pid": ap_pid,
+                        "pitcher_name": ap.get("name", ""),
+                        "pitcher_hand": ap.get("pitchHand", ""),
+                        "opp_team": gd.get("away_team", ""),
+                    }
+        today_lineups["matchups"] = matchups
     except Exception as exc:
         print(f"Warning: today's lineups fetch failed: {exc}")
-        today_lineups = {"player_ids": [], "games": []}
+        today_lineups = {"player_ids": [], "games": [], "games_detail": [], "matchups": {}}
 
     return {
         "generated_at":   datetime.now().strftime("%Y-%m-%d %H:%M:%S ET"),
@@ -792,6 +833,22 @@ footer{
 @keyframes spin{to{transform:rotate(360deg)}}
 /* Today's lineup badge */
 .today-badge{display:inline-flex;align-items:center;padding:.1rem .38rem;border-radius:3px;font-size:.58rem;font-weight:800;background:rgba(200,128,15,.18);color:var(--amber);border:1px solid rgba(200,128,15,.35);font-family:'Consolas','Menlo',monospace;margin-left:.35rem;letter-spacing:.04em;text-transform:uppercase}
+/* vs LHP/RHP splits */
+.hand-splits-wrap{display:grid;grid-template-columns:1fr 1fr;gap:.6rem;margin-bottom:.7rem}
+.hand-split-card{background:var(--surf2);border:1px solid var(--border);border-radius:var(--r-lg);padding:.65rem .75rem}
+.hand-split-hand{font-size:.6rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;margin-bottom:.38rem}
+.hand-split-hand.lhp{color:#7CB9E8}.hand-split-hand.rhp{color:#E87C7C}
+.hand-split-avg{font-size:1.45rem;font-weight:800;color:var(--t1);font-family:'Consolas','Menlo',monospace;line-height:1}
+.hand-split-ops{font-size:.67rem;color:var(--t2);margin:.18rem 0 .3rem}
+.hand-split-stats{font-size:.65rem;color:var(--tm);display:flex;gap:.45rem;flex-wrap:wrap}
+/* Today's matchup card */
+.matchup-card{background:var(--surf2);border:1px solid var(--border);border-radius:var(--r-lg);padding:.6rem .8rem;display:flex;align-items:center;gap:.7rem;margin-bottom:.75rem}
+.matchup-hand-badge{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:50%;font-size:.72rem;font-weight:900;font-family:'Consolas','Menlo',monospace;flex-shrink:0;letter-spacing:.03em}
+.matchup-hand-badge.lhp{background:rgba(124,185,232,.15);color:#7CB9E8;border:1px solid rgba(124,185,232,.3)}
+.matchup-hand-badge.rhp{background:rgba(232,124,124,.15);color:#E87C7C;border:1px solid rgba(232,124,124,.3)}
+.matchup-hand-badge.switch{background:rgba(200,128,15,.15);color:var(--amber);border:1px solid rgba(200,128,15,.3)}
+.matchup-pitcher-name{font-size:.88rem;font-weight:700;color:var(--t1);line-height:1.25}
+.matchup-pitcher-meta{font-size:.67rem;color:var(--tm);margin-top:.1rem}
 
 /* ── Mobile (≤540px — iPhone 13 and similar) ── */
 @media(max-width:540px){
@@ -936,6 +993,7 @@ footer{
     <div class="detail-tf-row" id="detail-tf-row"></div>
     <div id="detail-h2h-row" style="display:none"></div>
     <div id="detail-splits-row"></div>
+    <div id="detail-hand-splits-row"></div>
     <div id="detail-book-row"></div>
   </div>
 </div>
@@ -1184,7 +1242,7 @@ const masterDisplayList = [];
 propList.forEach((pd, i) => masterDisplayList.push({type:'bet', propIdx:i, player:pd.player}));
 const _trackedNames = new Set(propList.map(pd => pd.player.toLowerCase()));
 const _allRosterPlayers = Object.values(D.all_player_stats || {})
-  .filter(ps => !_trackedNames.has(ps.name.toLowerCase()))
+  .filter(ps => ps.name && !_trackedNames.has(ps.name.toLowerCase()))
   .map(ps => Object.assign({type:'stats', player:ps.name, isToday: todayPids.has(String(ps.pid))}, ps));
 const _todayRoster = _allRosterPlayers.filter(e => e.isToday).sort((a,b) => a.name.localeCompare(b.name));
 const _restRoster  = _allRosterPlayers.filter(e => !e.isToday).sort((a,b) => a.name.localeCompare(b.name));
@@ -1197,9 +1255,14 @@ let activeIdx = -1;
 let activeStatsEntry = null;
 let activeStatType = null;
 let activeGameLog = null;
+let activeBatterSplits = null;
 let h2hOpp = null;
 let viewSide = null;
 const _glCache = {};
+
+// Name → player entry lookup for finding pid of bet-tracked players
+const playerByName = {};
+Object.values(D.all_player_stats || {}).forEach(p => { playerByName[p.name.toLowerCase()] = p; });
 
 // Build stat filter chips
 (function(){
@@ -1289,6 +1352,35 @@ async function fetchGameLogClient(pid, statType) {
   }
 }
 
+async function fetchBatterHandSplits(pid) {
+  const key = 'hs||' + pid;
+  if (_glCache[key]) return _glCache[key];
+  try {
+    const url = `https://statsapi.mlb.com/api/v1/people/${pid}/stats?stats=statSplits&season=2025&group=hitting&sitCodes=vr,vl&gameType=R`;
+    const res = await fetch(url);
+    const data = await res.json();
+    const out = {};
+    for (const blk of (data.stats || [])) {
+      for (const sp of (blk.splits || [])) {
+        const code = (sp.split || {}).code || '';
+        if (code === 'vr' || code === 'vl') {
+          const s = sp.stat || {};
+          const k = code === 'vr' ? 'vsR' : 'vsL';
+          out[k] = {
+            avg: s.avg || '---', ops: s.ops || '---',
+            obp: s.obp || '---', slg: s.slg || '---',
+            hr: s.homeRuns || 0, rbi: s.rbi || 0,
+            k: s.strikeOuts || 0, bb: s.baseOnBalls || 0,
+            ab: s.atBats || 0, g: s.gamesPlayed || 0,
+          };
+        }
+      }
+    }
+    _glCache[key] = out;
+    return out;
+  } catch(e) { _glCache[key] = {}; return {}; }
+}
+
 function setViewSide(s) {
   viewSide = s;
   renderDetailView();
@@ -1299,11 +1391,22 @@ async function switchStatsProp(statType) {
   const entry = activeStatsEntry;
   activeStatType = statType;
   activeGameLog = null;
+  viewSide = null;
   document.getElementById('detail-chart-wrap').innerHTML = '<div class="detail-loading"><div class="detail-spinner"></div>Loading game log…</div>';
   document.getElementById('detail-avg').textContent = '';
   document.getElementById('detail-tf-row').innerHTML = '';
   document.getElementById('detail-h2h-row').style.display = 'none';
-  activeGameLog = await fetchGameLogClient(entry.pid, statType);
+  document.getElementById('detail-hand-splits-row').innerHTML = '';
+  // Fetch game log; also refresh hand splits if switching to a batter type
+  if (!statType.startsWith('Pitcher')) {
+    [activeGameLog, activeBatterSplits] = await Promise.all([
+      fetchGameLogClient(entry.pid, statType),
+      fetchBatterHandSplits(entry.pid),
+    ]);
+  } else {
+    activeBatterSplits = null;
+    activeGameLog = await fetchGameLogClient(entry.pid, statType);
+  }
   if (activeStatsEntry === entry && activeStatType === statType) renderDetailView();
 }
 
@@ -1351,7 +1454,7 @@ function renderPropList() {
           </div>
         </div>
         <div class="prop-row-mid">
-          <div class="prop-row-edge">+${pd.edge}%</div>
+          <div class="prop-row-edge">${pd.edge > 0 ? '+' : ''}${pd.edge}%</div>
           <div class="prop-row-edge-lbl">EDGE</div>
         </div>
         <div class="prop-row-right">
@@ -1624,6 +1727,54 @@ function renderDetailView() {
     splitsEl.innerHTML = '';
   }
 
+  // ── vs LHP / RHP splits + today's matchup (batters only) ──
+  const handSplitsEl = document.getElementById('detail-hand-splits-row');
+  if (handSplitsEl) {
+    const isBatter = isStatsOnly ? activeStatsEntry.pos !== 'P' : !propList[activeIdx].stat.startsWith('Pitcher');
+    if (isBatter) {
+      const pid = isStatsOnly ? String(activeStatsEntry.pid) : String((playerByName[pd.player.toLowerCase()] || {}).pid || '');
+      const hs = activeBatterSplits;
+      const matchup = pid ? ((D.today_lineups && D.today_lineups.matchups) || {})[pid] : null;
+      let html = `<div class="sec" style="margin:.85rem 0 .4rem"><h2>vs LHP &amp; RHP</h2><div class="sec-rule"></div></div>`;
+      if (hs && (hs.vsL || hs.vsR)) {
+        html += `<div class="hand-splits-wrap">`;
+        [['vsL','vs LHP','lhp'],['vsR','vs RHP','rhp']].forEach(([k,label,cls]) => {
+          const s = hs[k];
+          if (s) {
+            html += `<div class="hand-split-card">
+              <div class="hand-split-hand ${cls}">${label}</div>
+              <div class="hand-split-avg">${s.avg}</div>
+              <div class="hand-split-ops">OPS ${s.ops} &middot; OBP ${s.obp} &middot; SLG ${s.slg}</div>
+              <div class="hand-split-stats">${s.hr} HR &middot; ${s.rbi} RBI &middot; ${s.k} K &middot; ${s.bb} BB &middot; ${s.ab} AB &middot; ${s.g}G</div>
+            </div>`;
+          } else {
+            html += `<div class="hand-split-card"><div class="hand-split-hand ${cls}">${label}</div><div style="color:var(--tm);font-size:.75rem;margin-top:.5rem">No data</div></div>`;
+          }
+        });
+        html += `</div>`;
+      } else if (hs !== null) {
+        html += `<div style="color:var(--tm);font-size:.78rem;padding:.4rem 0 .7rem">No split data available for 2025.</div>`;
+      } else {
+        html += `<div class="detail-loading" style="height:70px"><div class="detail-spinner"></div>Loading splits…</div>`;
+      }
+      if (matchup && matchup.pitcher_name) {
+        const hand = matchup.pitcher_hand || '';
+        const handCls = hand === 'L' ? 'lhp' : hand === 'R' ? 'rhp' : 'switch';
+        const handLbl = hand === 'L' ? 'LHP' : hand === 'R' ? 'RHP' : hand || '—';
+        html += `<div class="matchup-card">
+          <div class="matchup-hand-badge ${handCls}">${handLbl}</div>
+          <div>
+            <div class="matchup-pitcher-name">${matchup.pitcher_name}</div>
+            <div class="matchup-pitcher-meta">Today's Matchup &middot; ${matchup.opp_team || ''}</div>
+          </div>
+        </div>`;
+      }
+      handSplitsEl.innerHTML = html;
+    } else {
+      handSplitsEl.innerHTML = '';
+    }
+  }
+
   // ── Book row (bet-tracked only) ──
   if (!isStatsOnly) {
     const recent = pd.bets[pd.bets.length-1];
@@ -1641,9 +1792,11 @@ async function openDetailMaster(midx) {
   const entry = masterDisplayList[midx];
   h2hOpp = null;
   viewSide = null;
+  activeBatterSplits = null;
   if (propTf === 'h2h') propTf = 'L10';
   document.getElementById('props-list-view').style.display = 'none';
   document.getElementById('props-detail-view').style.display = '';
+  document.getElementById('detail-hand-splits-row').innerHTML = '';
   if (entry.type === 'bet') {
     activeIdx = entry.propIdx;
     activeStatsEntry = null;
@@ -1654,6 +1807,14 @@ async function openDetailMaster(midx) {
     document.getElementById('detail-player-name').textContent = pd.player;
     document.getElementById('detail-prop-meta').textContent = (pd.side==='O'?'Over':'Under') + ' ' + pd.threshold + ' ' + sl;
     renderDetailView();
+    // Async: fetch hand splits for batter props
+    if (!pd.stat.startsWith('Pitcher')) {
+      const pEntry = playerByName[pd.player.toLowerCase()];
+      if (pEntry?.pid) {
+        activeBatterSplits = await fetchBatterHandSplits(pEntry.pid);
+        if (activeIdx === entry.propIdx && activeStatsEntry === null) renderDetailView();
+      }
+    }
   } else {
     activeIdx = -1;
     activeStatsEntry = entry;
@@ -1675,7 +1836,15 @@ async function openDetailMaster(midx) {
         const lbl = STAT_LABELS[st] || st.replace(/^(Batter|Pitcher)\s+/,'');
         return `<option value="${st}"${st===activeStatType?' selected':''}>${lbl}</option>`;
       }).join('') + `</select>`;
-    activeGameLog = await fetchGameLogClient(entry.pid, activeStatType);
+    if (entry.pos !== 'P') {
+      // Fetch game log and batter splits in parallel
+      [activeGameLog, activeBatterSplits] = await Promise.all([
+        fetchGameLogClient(entry.pid, activeStatType),
+        fetchBatterHandSplits(entry.pid),
+      ]);
+    } else {
+      activeGameLog = await fetchGameLogClient(entry.pid, activeStatType);
+    }
     if (activeStatsEntry === entry) renderDetailView();
   }
 }
@@ -1685,6 +1854,7 @@ function closeDetail() {
   activeStatsEntry = null;
   activeStatType = null;
   activeGameLog = null;
+  activeBatterSplits = null;
   h2hOpp = null;
   viewSide = null;
   if (propTf === 'h2h') propTf = 'L10';
@@ -1799,7 +1969,7 @@ def generate(db_path: str, out_path: str) -> None:
             "today": date.today().isoformat(),
             "today_picks": [], "recent_bets": [], "daily_pnl": [],
             "top_markets": [], "sports": [], "prop_bets": [], "player_seasons": {}, "all_player_stats": {},
-            "today_lineups": {"player_ids": [], "games": []},
+            "today_lineups": {"player_ids": [], "games": [], "games_detail": [], "matchups": {}},
             "stats": {"total_picks":0,"n_resolved":0,"n_wins":0,"win_rate":0,
                       "roi":0,"total_profit":0,"avg_edge":0,"avg_clv":None},
         }
