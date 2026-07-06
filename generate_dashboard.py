@@ -13,6 +13,7 @@ Free hosting options for the output file:
 from __future__ import annotations
 import argparse
 import json
+import re
 import sqlite3
 from collections import Counter, defaultdict
 from datetime import date, datetime
@@ -64,8 +65,6 @@ def read_db(db_path: str) -> dict:
         ORDER BY day
     """)]
 
-    conn.close()
-
     # Cumulative P&L
     cum = 0.0
     for row in daily_rows:
@@ -108,6 +107,48 @@ def read_db(db_path: str) -> dict:
             "wins":     sport_wins.get(sport, 0),
         })
 
+    # Player prop history (all MLB bets with Batter/Pitcher in market label)
+    _prop_re = re.compile(
+        r'^(.+?)\s+((?:Batter|Pitcher)(?:\s+\w+)+)\s+([OU])(\d+(?:\.\d+)?)$'
+    )
+    _proj_num_re = re.compile(r'Proj:\s*([\d.]+)')
+    prop_rows = [dict(r) for r in conn.execute("""
+        SELECT event, market, edge, stake_units,
+               result, profit_units, logged_at, projected_score
+        FROM bets_log
+        WHERE sport = 'MLB'
+          AND (market LIKE '% Batter %' OR market LIKE '% Pitcher %')
+        ORDER BY logged_at
+    """)]
+    prop_bets = []
+    for row in prop_rows:
+        m = _prop_re.match((row.get("market") or "").strip())
+        if not m:
+            continue
+        ps = row.get("projected_score") or ""
+        pm = _proj_num_re.search(ps)
+        proj_num = None
+        if pm:
+            try:
+                proj_num = float(pm.group(1))
+            except ValueError:
+                pass
+        prop_bets.append({
+            "player":    m.group(1),
+            "stat":      m.group(2),
+            "side":      m.group(3),
+            "threshold": float(m.group(4)),
+            "event":     row.get("event") or "",
+            "edge":      round(_safe_float(row.get("edge")) * 100, 1),
+            "stake":     round(_safe_float(row.get("stake_units")), 2),
+            "result":    row.get("result") or "",
+            "profit":    round(_safe_float(row.get("profit_units") or 0), 2),
+            "date":      (row.get("logged_at") or "")[:10],
+            "proj_stat": proj_num,
+        })
+
+    conn.close()
+
     return {
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S ET"),
         "today":        today_str,
@@ -116,6 +157,7 @@ def read_db(db_path: str) -> dict:
         "daily_pnl":    daily_rows,
         "top_markets":  top_markets,
         "sports":       sports,
+        "prop_bets":    prop_bets,
         "stats": {
             "total_picks":    len(bets),
             "n_resolved":     n_resolved,
@@ -389,6 +431,64 @@ footer{
   font-family:'Consolas','Menlo',monospace;letter-spacing:.04em;
 }
 
+/* ── Tabs ── */
+.tabs{
+  display:flex;margin:.75rem 0 0;
+  border-bottom:1px solid var(--border);
+  overflow-x:auto;scrollbar-width:none;
+}
+.tabs::-webkit-scrollbar{display:none}
+.tab{
+  background:none;border:none;border-bottom:2px solid transparent;
+  color:var(--tm);font-size:.7rem;font-weight:700;
+  text-transform:uppercase;letter-spacing:.09em;
+  padding:.65rem .9rem;cursor:pointer;white-space:nowrap;
+  transition:color .15s,border-color .15s;font-family:inherit;
+  margin-bottom:-1px;flex-shrink:0;
+}
+.tab:hover{color:var(--t2)}
+.tab.active{color:var(--mlb);border-bottom-color:var(--mlb)}
+.tab-badge{
+  display:inline-flex;align-items:center;justify-content:center;
+  min-width:16px;height:16px;border-radius:8px;padding:0 4px;
+  background:var(--surf2);border:1px solid var(--border2);
+  font-size:.55rem;color:var(--t2);font-family:inherit;
+  font-variant-numeric:tabular-nums;vertical-align:middle;margin-left:3px;
+}
+.tab-panel{display:none}
+.tab-panel.active{display:block}
+
+/* ── Player props section ── */
+.prop-controls{
+  display:flex;align-items:center;gap:.75rem;
+  margin-bottom:1rem;flex-wrap:wrap;
+}
+.prop-select{
+  background:var(--surf);border:1px solid var(--border2);
+  color:var(--t1);border-radius:var(--r);
+  padding:.45rem .75rem;font-size:.78rem;font-family:inherit;
+  cursor:pointer;flex:1;min-width:160px;max-width:300px;
+  -webkit-appearance:none;appearance:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%234E6480' d='M5 6L0 0h10z'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right .65rem center;
+  padding-right:2rem;
+}
+.prop-select:focus{outline:none;border-color:var(--mlb)}
+.prop-select:disabled{opacity:.4;cursor:default}
+.prop-mini-strip{display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:.85rem}
+.prop-mini-tile{
+  background:var(--surf);border:1px solid var(--border);
+  border-radius:var(--r);padding:.5rem .85rem;
+  display:flex;flex-direction:column;align-items:center;min-width:72px;
+}
+.prop-mini-val{
+  font-size:1.05rem;font-weight:700;
+  font-family:'Consolas','Menlo',monospace;font-variant-numeric:tabular-nums;
+}
+.prop-mini-lbl{font-size:.58rem;color:var(--tm);text-transform:uppercase;letter-spacing:.09em;margin-top:.2rem}
+.prop-chart-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:.5rem}
+.prop-chart-scroll canvas{display:block;min-height:220px}
+
 /* ── Mobile (≤540px — iPhone 13 and similar) ── */
 @media(max-width:540px){
   .shell{padding:.75rem .85rem 2.5rem}
@@ -425,6 +525,12 @@ footer{
   /* Table: tighten cell padding so more fits before scroll kicks in */
   tbody td{padding:.45rem .65rem;font-size:.75rem}
   thead th{padding:.55rem .65rem}
+
+  /* Tabs on mobile */
+  .tab{padding:.55rem .7rem;font-size:.65rem}
+
+  /* Prop controls full-width on mobile */
+  .prop-select{max-width:100%;font-size:.75rem}
 }
 </style>
 </head>
@@ -447,53 +553,85 @@ footer{
 
 <div class="kpi-strip" id="kpi-strip"></div>
 
-<div class="sec">
-  <h2>Today's Picks</h2>
-  <span class="badge" id="picks-badge">0</span>
-  <div class="sec-rule"></div>
-</div>
-<div id="picks-container"></div>
-
-<div class="sec">
-  <h2>Performance</h2>
-  <div class="sec-rule"></div>
-</div>
-<div class="charts-row">
-  <div class="chart-card">
-    <div class="chart-title">Cumulative P&amp;L (units)</div>
-    <div class="chart-wrap"><canvas id="pnl-chart"></canvas></div>
-  </div>
-  <div class="chart-card">
-    <div class="chart-title">Top Markets</div>
-    <div class="chart-wrap"><canvas id="mkt-chart"></canvas></div>
-  </div>
+<div class="tabs" role="tablist">
+  <button class="tab active" role="tab" data-tab="picks">Today&thinsp;<span class="tab-badge" id="tab-picks-badge">0</span></button>
+  <button class="tab" role="tab" data-tab="performance">Performance</button>
+  <button class="tab" role="tab" data-tab="props">Player Props</button>
+  <button class="tab" role="tab" data-tab="history">History&thinsp;<span class="tab-badge" id="tab-history-badge">0</span></button>
 </div>
 
-<div class="sec" style="margin-top:1.75rem">
-  <h2>Bet History</h2>
-  <span class="badge" id="history-badge">0</span>
-  <div class="sec-rule"></div>
+<!-- Today's Picks -->
+<div id="tab-picks" class="tab-panel active">
+  <div class="sec" style="margin-top:1rem">
+    <h2>Today's Picks</h2>
+    <div class="sec-rule"></div>
+  </div>
+  <div id="picks-container"></div>
 </div>
-<div class="filter-row" id="filter-row"></div>
-<div class="tbl-card">
-  <div class="tbl-scroll">
-    <table>
-      <thead>
-        <tr>
-          <th onclick="sortTable(0)">Sport</th>
-          <th onclick="sortTable(1)">Event</th>
-          <th onclick="sortTable(2)">Market</th>
-          <th onclick="sortTable(3)">Line</th>
-          <th onclick="sortTable(4)">Book</th>
-          <th onclick="sortTable(5)">Edge</th>
-          <th onclick="sortTable(6)">Stake</th>
-          <th onclick="sortTable(7)">Result</th>
-          <th onclick="sortTable(8)">P&amp;L</th>
-          <th onclick="sortTable(9)">Date</th>
-        </tr>
-      </thead>
-      <tbody id="bet-tbody"></tbody>
-    </table>
+
+<!-- Performance -->
+<div id="tab-performance" class="tab-panel">
+  <div class="sec" style="margin-top:1rem">
+    <h2>Performance</h2>
+    <div class="sec-rule"></div>
+  </div>
+  <div class="charts-row">
+    <div class="chart-card">
+      <div class="chart-title">Cumulative P&amp;L (units)</div>
+      <div class="chart-wrap"><canvas id="pnl-chart"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">Top Markets</div>
+      <div class="chart-wrap"><canvas id="mkt-chart"></canvas></div>
+    </div>
+  </div>
+</div>
+
+<!-- Player Props -->
+<div id="tab-props" class="tab-panel">
+  <div class="sec" style="margin-top:1rem">
+    <h2>Player Props History</h2>
+    <div class="sec-rule"></div>
+  </div>
+  <div class="prop-controls">
+    <select id="prop-player" class="prop-select"><option value="">Select player…</option></select>
+    <select id="prop-stat" class="prop-select" disabled><option value="">Select stat…</option></select>
+  </div>
+  <div id="prop-mini-strip" class="prop-mini-strip" style="display:none"></div>
+  <div class="chart-card" id="prop-chart-card" style="display:none">
+    <div class="chart-title" id="prop-chart-title"></div>
+    <div class="prop-chart-scroll"><canvas id="prop-chart"></canvas></div>
+  </div>
+  <div class="no-picks" id="prop-empty">Select a player and stat above to see their prop history.</div>
+</div>
+
+<!-- Bet History -->
+<div id="tab-history" class="tab-panel">
+  <div class="sec" style="margin-top:1rem">
+    <h2>Bet History</h2>
+    <div class="sec-rule"></div>
+  </div>
+  <div class="filter-row" id="filter-row"></div>
+  <div class="tbl-card">
+    <div class="tbl-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th onclick="sortTable(0)">Sport</th>
+            <th onclick="sortTable(1)">Event</th>
+            <th onclick="sortTable(2)">Market</th>
+            <th onclick="sortTable(3)">Line</th>
+            <th onclick="sortTable(4)">Book</th>
+            <th onclick="sortTable(5)">Edge</th>
+            <th onclick="sortTable(6)">Stake</th>
+            <th onclick="sortTable(7)">Result</th>
+            <th onclick="sortTable(8)">P&amp;L</th>
+            <th onclick="sortTable(9)">Date</th>
+          </tr>
+        </thead>
+        <tbody id="bet-tbody"></tbody>
+      </table>
+    </div>
   </div>
 </div>
 
@@ -506,7 +644,7 @@ const D = __DATA__;
 document.getElementById('updated-at').textContent = 'Updated ' + D.generated_at;
 document.getElementById('hdr-date').textContent = D.today;
 
-// KPI strip
+// ── KPI strip ────────────────────────────────────────────────
 const s = D.stats;
 const kpis = [
   { label:'Total Picks', sub:'all time', accent:'#5A7AE8',
@@ -537,9 +675,27 @@ document.getElementById('kpi-strip').innerHTML = kpis.map(k=>`
     <div class="kpi-sub">${k.sub}</div>
   </div>`).join('');
 
-// Today's picks
+// ── Tabs ─────────────────────────────────────────────────────
+let perfInited = false;
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+    if (tab.dataset.tab === 'performance' && !perfInited) {
+      perfInited = true;
+      initPerfCharts();
+    }
+    if (tab.dataset.tab === 'props' && propChart) {
+      setTimeout(() => propChart.resize(), 10);
+    }
+  });
+});
+
+// ── Today's picks ─────────────────────────────────────────────
 const picks = D.today_picks;
-document.getElementById('picks-badge').textContent = picks.length;
+document.getElementById('tab-picks-badge').textContent = picks.length;
 const pc = document.getElementById('picks-container');
 if (!picks.length) {
   pc.innerHTML = '<div class="no-picks">No picks logged for today yet — check back after the next run.</div>';
@@ -591,67 +747,208 @@ if (!picks.length) {
   }).join('')+'</div>';
 }
 
-// P&L chart
-const pnlData=D.daily_pnl;
-if(pnlData.length>0){
-  const labels=pnlData.map(r=>r.day);
-  const vals=pnlData.map(r=>r.cumulative);
-  const lastVal=vals[vals.length-1]||0;
-  const lc=lastVal>=0?'#4ADE80':'#F87171';
-  const fc=lastVal>=0?'rgba(74,222,128,.07)':'rgba(248,113,113,.07)';
-  new Chart(document.getElementById('pnl-chart'),{
-    type:'line',
-    data:{labels,datasets:[{
-      data:vals,borderColor:lc,backgroundColor:fc,
-      borderWidth:1.5,fill:true,tension:.35,
-      pointRadius:vals.length>20?0:3,pointHoverRadius:5,pointBackgroundColor:lc,
-    }]},
-    options:{
-      responsive:true,maintainAspectRatio:false,
-      plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>(ctx.raw>=0?'+':'')+ctx.raw.toFixed(2)+'u'}}},
-      scales:{
-        x:{ticks:{color:'#4E6480',font:{size:9,family:'Consolas,Menlo,monospace'}},grid:{color:'rgba(30,46,70,.5)'}},
-        y:{ticks:{color:'#4E6480',font:{size:9,family:'Consolas,Menlo,monospace'},callback:v=>(v>0?'+':'')+v+'u'},grid:{color:'rgba(30,46,70,.8)',borderDash:[3,3]}}
+// ── Performance charts (lazy — init on first tab click) ───────
+function initPerfCharts() {
+  const pnlData = D.daily_pnl;
+  if (pnlData.length > 0) {
+    const labels = pnlData.map(r => r.day);
+    const vals = pnlData.map(r => r.cumulative);
+    const lastVal = vals[vals.length-1] || 0;
+    const lc = lastVal >= 0 ? '#4ADE80' : '#F87171';
+    const fc = lastVal >= 0 ? 'rgba(74,222,128,.07)' : 'rgba(248,113,113,.07)';
+    new Chart(document.getElementById('pnl-chart'), {
+      type: 'line',
+      data: {labels, datasets: [{
+        data: vals, borderColor: lc, backgroundColor: fc,
+        borderWidth: 1.5, fill: true, tension: .35,
+        pointRadius: vals.length > 20 ? 0 : 3,
+        pointHoverRadius: 5, pointBackgroundColor: lc,
+      }]},
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {legend: {display: false}, tooltip: {callbacks: {label: ctx => (ctx.raw>=0?'+':'')+ctx.raw.toFixed(2)+'u'}}},
+        scales: {
+          x: {ticks: {color:'#4E6480',font:{size:9,family:'Consolas,Menlo,monospace'}}, grid: {color:'rgba(30,46,70,.5)'}},
+          y: {ticks: {color:'#4E6480',font:{size:9,family:'Consolas,Menlo,monospace'},callback:v=>(v>0?'+':'')+v+'u'}, grid: {color:'rgba(30,46,70,.8)',borderDash:[3,3]}}
+        }
       }
-    }
-  });
-} else {
-  document.getElementById('pnl-chart').parentElement.innerHTML=
-    '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--tm);font-size:.8rem">No resolved bets yet</div>';
+    });
+  } else {
+    document.getElementById('pnl-chart').parentElement.innerHTML =
+      '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--tm);font-size:.8rem">No resolved bets yet</div>';
+  }
+  const mkts = D.top_markets;
+  if (mkts.length > 0) {
+    const cats = ['#5A7AE8','#18A88A','#C8800F','#E04868','#7B9BFF','#1EC09E','#D4960F','#F0607A'];
+    new Chart(document.getElementById('mkt-chart'), {
+      type: 'bar',
+      data: {
+        labels: mkts.map(m => m.market),
+        datasets: [{
+          data: mkts.map(m => m.count),
+          backgroundColor: mkts.map((_,i) => cats[i%cats.length]+'BB'),
+          borderColor: mkts.map((_,i) => cats[i%cats.length]),
+          borderWidth: 1, borderRadius: 3, borderSkipped: 'start',
+        }]
+      },
+      options: {
+        indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+        plugins: {legend: {display: false}, tooltip: {callbacks: {label: ctx => ctx.raw+' picks'}}},
+        scales: {
+          x: {ticks: {color:'#4E6480',font:{size:9}}, grid: {color:'rgba(30,46,70,.8)'}},
+          y: {ticks: {color:'#8B9EC4',font:{size:10,family:'Consolas,Menlo,monospace'}}, grid: {display:false}}
+        }
+      }
+    });
+  } else {
+    document.getElementById('mkt-chart').parentElement.innerHTML =
+      '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--tm);font-size:.8rem">No data yet</div>';
+  }
 }
 
-// Markets chart — categorical: fixed slot order, validated palette
-const mkts=D.top_markets;
-if(mkts.length>0){
-  const cats=['#5A7AE8','#18A88A','#C8800F','#E04868','#7B9BFF','#1EC09E','#D4960F','#F0607A'];
-  new Chart(document.getElementById('mkt-chart'),{
-    type:'bar',
-    data:{
-      labels:mkts.map(m=>m.market),
-      datasets:[{
-        data:mkts.map(m=>m.count),
-        backgroundColor:mkts.map((_,i)=>cats[i%cats.length]+'BB'),
-        borderColor:mkts.map((_,i)=>cats[i%cats.length]),
-        borderWidth:1,borderRadius:3,borderSkipped:'start',
-      }]
+// ── Player Props ──────────────────────────────────────────────
+const propBets = D.prop_bets || [];
+const playerSel = document.getElementById('prop-player');
+const statSel   = document.getElementById('prop-stat');
+const propEmpty = document.getElementById('prop-empty');
+const propCard  = document.getElementById('prop-chart-card');
+const propMini  = document.getElementById('prop-mini-strip');
+let propChart   = null;
+
+if (propBets.length) {
+  const players = [...new Set(propBets.map(p => p.player))].sort();
+  players.forEach(p => playerSel.add(new Option(p, p)));
+} else {
+  playerSel.disabled = true;
+  propEmpty.textContent = 'No player prop bets recorded yet — props will appear here after the next daily card run.';
+}
+
+function updateStatOptions(player) {
+  statSel.innerHTML = '<option value="">Select stat…</option>';
+  if (!player) { statSel.disabled = true; return; }
+  const stats = [...new Set(propBets.filter(p => p.player === player).map(p => p.stat))].sort();
+  stats.forEach(s => statSel.add(new Option(s.replace(/^(Batter|Pitcher)\s+/,''), s)));
+  statSel.disabled = false;
+}
+
+function renderPropChart() {
+  const player = playerSel.value;
+  const stat   = statSel.value;
+  if (!player || !stat) {
+    propCard.style.display = 'none'; propMini.style.display = 'none';
+    propEmpty.style.display = ''; return;
+  }
+  const rows = propBets.filter(p => p.player === player && p.stat === stat);
+  rows.sort((a, b) => a.date.localeCompare(b.date));
+
+  propEmpty.style.display = 'none';
+  propCard.style.display  = '';
+  propMini.style.display  = '';
+
+  // Mini summary strip
+  const won    = rows.filter(r => r.result === 'win').length;
+  const lost   = rows.filter(r => r.result === 'loss').length;
+  const pend   = rows.filter(r => !r.result).length;
+  const profit = rows.reduce((s, r) => s + r.profit, 0);
+  propMini.innerHTML = [
+    {v: rows.length,  l:'Bets',    c:'kpi-neu'},
+    {v: won,          l:'Won',     c:'kpi-up'},
+    {v: lost,         l:'Lost',    c:'kpi-dn'},
+    {v: pend,         l:'Pending', c:'kpi-neu'},
+    {v: (profit>=0?'+':'')+profit.toFixed(2)+'u', l:'P&L', c: profit>=0?'kpi-up':'kpi-dn'},
+  ].map(t => `<div class="prop-mini-tile"><div class="prop-mini-val ${t.c}">${t.v}</div><div class="prop-mini-lbl">${t.l}</div></div>`).join('');
+
+  const statLabel = stat.replace(/^(Batter|Pitcher)\s+/, '');
+  document.getElementById('prop-chart-title').textContent =
+    player + ' — ' + statLabel + ' (' + rows.length + ' bet' + (rows.length !== 1 ? 's' : '') + ')';
+
+  const labels = rows.map(r => {
+    const parts = (r.event || '').split(' @ ');
+    const short = parts.length === 2
+      ? parts.map(t => t.trim().split(' ').slice(-1)[0]).join('@')
+      : (r.event || '').slice(0, 12);
+    return r.date.slice(5) + ' ' + short;
+  });
+  const barBg = rows.map(r =>
+    r.result==='win'  ? 'rgba(74,222,128,.75)'  :
+    r.result==='loss' ? 'rgba(248,113,113,.75)' : 'rgba(78,100,128,.45)'
+  );
+  const barBd = rows.map(r =>
+    r.result==='win'  ? '#4ADE80' :
+    r.result==='loss' ? '#F87171' : '#4E6480'
+  );
+
+  const canvas = document.getElementById('prop-chart');
+  canvas.style.width  = Math.max(600, rows.length * 38) + 'px';
+  canvas.style.height = '230px';
+
+  if (propChart) propChart.destroy();
+  propChart = new Chart(canvas, {
+    data: {
+      labels,
+      datasets: [
+        {
+          type: 'bar', label: 'Bet line',
+          data: rows.map(r => r.threshold),
+          backgroundColor: barBg, borderColor: barBd,
+          borderWidth: 1.5, borderRadius: 4, order: 2,
+        },
+        {
+          type: 'line', label: 'Projected',
+          data: rows.map(r => r.proj_stat),
+          borderColor: '#C8800F', backgroundColor: 'transparent',
+          borderWidth: 2, borderDash: [4, 3],
+          pointRadius: 4, pointBackgroundColor: '#C8800F',
+          pointBorderColor: '#0B1120', pointBorderWidth: 1,
+          tension: 0.2, spanGaps: true, order: 1,
+        }
+      ]
     },
-    options:{
-      indexAxis:'y',responsive:true,maintainAspectRatio:false,
-      plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>ctx.raw+' picks'}}},
-      scales:{
-        x:{ticks:{color:'#4E6480',font:{size:9}},grid:{color:'rgba(30,46,70,.8)'}},
-        y:{ticks:{color:'#8B9EC4',font:{size:10,family:'Consolas,Menlo,monospace'}},grid:{display:false}}
+    options: {
+      responsive: false, maintainAspectRatio: false,
+      interaction: {mode:'index', intersect:false},
+      plugins: {
+        legend: {
+          display: true, position: 'top', align: 'start',
+          labels: {color:'#8B9EC4', font:{size:10}, boxWidth:14, padding:14}
+        },
+        tooltip: {
+          callbacks: {
+            title: ctx => rows[ctx[0].dataIndex].event || '',
+            label: ctx => {
+              if (ctx.dataset.label === 'Projected')
+                return ctx.raw !== null ? 'Projected: ' + ctx.raw : null;
+              const r = rows[ctx.dataIndex];
+              return [
+                r.side + r.threshold + '  Edge: +' + r.edge + '%  Stake: ' + r.stake + 'u',
+                r.result ? 'Result: ' + (r.result==='win' ? 'Win ✓' : 'Loss ✗') : 'Result: Pending',
+              ];
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          ticks: {color:'#4E6480', font:{size:8,family:'Consolas,Menlo,monospace'}, maxRotation:40, minRotation:30},
+          grid: {display:false}
+        },
+        y: {
+          title: {display:true, text:statLabel, color:'#8B9EC4', font:{size:10}},
+          ticks: {color:'#4E6480', font:{size:9}},
+          grid: {color:'rgba(30,46,70,.5)', borderDash:[3,3]},
+          beginAtZero: true,
+        }
       }
     }
   });
-} else {
-  document.getElementById('mkt-chart').parentElement.innerHTML=
-    '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--tm);font-size:.8rem">No data yet</div>';
 }
 
-// Filter chips + table
-const bets=D.recent_bets;
-document.getElementById('history-badge').textContent=bets.length;
+playerSel.addEventListener('change', () => { updateStatOptions(playerSel.value); renderPropChart(); });
+statSel.addEventListener('change', renderPropChart);
+
+// ── Bet History ───────────────────────────────────────────────
+const bets = D.recent_bets;
+document.getElementById('tab-history-badge').textContent = bets.length;
 const sports=['All',...new Set(bets.map(b=>b.sport||'?').filter(Boolean))];
 let activeSport='All';
 document.getElementById('filter-row').innerHTML=sports.map(sp=>
