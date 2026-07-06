@@ -388,6 +388,44 @@ footer{
   padding-top:2rem;
   font-family:'Consolas','Menlo',monospace;letter-spacing:.04em;
 }
+
+/* ── Mobile (≤540px — iPhone 13 and similar) ── */
+@media(max-width:540px){
+  .shell{padding:.75rem .85rem 2.5rem}
+
+  /* Header */
+  .hdr-date{display:none}
+  .brand-text h1{font-size:.85rem}
+
+  /* KPI strip: tighter tiles */
+  .kpi-strip{gap:.5rem}
+  .kpi-tile{padding:.7rem .75rem}
+  .kpi-value{font-size:1.2rem}
+  .kpi-sub{font-size:.6rem}
+
+  /* Game accordion: tighter horizontal padding */
+  .game-hdr{padding:.75rem .85rem}
+  .game-title{font-size:.82rem}
+  .game-body-inner{padding:0 .85rem}
+  .game-group.open .game-body-inner{padding:.6rem .85rem .85rem}
+
+  /* Pick rows: stack vertically so nothing is cut off */
+  .pick-row{flex-direction:column;align-items:flex-start;gap:.35rem}
+  .pick-row-left{width:100%}
+  .pick-row-market{white-space:normal;word-break:break-word;font-size:.82rem}
+  .pick-row-proj{white-space:normal;word-break:break-word}
+  .pick-row-right{width:100%;justify-content:space-between;flex-shrink:1}
+  .pick-row-meta{text-align:left}
+  .pick-row-edge{font-size:.95rem}
+  .pick-row-line{font-size:.88rem}
+
+  /* Charts: shorter on mobile */
+  .chart-wrap{height:155px}
+
+  /* Table: tighten cell padding so more fits before scroll kicks in */
+  tbody td{padding:.45rem .65rem;font-size:.75rem}
+  thead th{padding:.55rem .65rem}
+}
 </style>
 </head>
 <body>
