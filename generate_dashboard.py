@@ -648,6 +648,12 @@ footer{
 .detail-book-label{font-size:.7rem;font-weight:700;color:var(--t2);text-transform:uppercase;letter-spacing:.05em}
 .detail-book-line{font-size:1rem;font-weight:800;color:var(--odds);font-family:'Consolas','Menlo',monospace}
 .detail-book-desc{font-size:.72rem;color:var(--tm)}
+.detail-prop-select{background:var(--surf2);color:var(--t1);border:1px solid var(--border2);border-radius:var(--r);padding:.35rem .55rem;font-family:inherit;font-size:.72rem;cursor:pointer;max-width:180px}
+.detail-prop-select option{background:var(--surf2)}
+.h2h-opp-row{display:flex;flex-wrap:wrap;gap:.4rem;margin-bottom:.6rem}
+.h2h-opp-btn{background:var(--surf2);border:1px solid var(--border);border-radius:var(--r);padding:.28rem .6rem;font-size:.68rem;font-weight:700;color:var(--t2);cursor:pointer;font-family:'Consolas','Menlo',monospace;transition:all .1s}
+.h2h-opp-btn.active{background:rgba(90,122,232,.15);border-color:var(--mlb);color:var(--mlb)}
+.h2h-no-data{padding:.75rem;font-size:.75rem;color:var(--tm);text-align:center}
 
 /* ── Mobile (≤540px — iPhone 13 and similar) ── */
 @media(max-width:540px){
@@ -782,11 +788,13 @@ footer{
       <div>
         <div class="detail-player" id="detail-player-name"></div>
         <div class="detail-prop-meta" id="detail-prop-meta"></div>
+        <div id="detail-prop-selector" style="margin-top:.5rem"></div>
       </div>
       <div class="detail-avg" id="detail-avg"></div>
     </div>
     <div class="detail-chart-wrap" id="detail-chart-wrap"></div>
     <div class="detail-tf-row" id="detail-tf-row"></div>
+    <div id="detail-h2h-row" style="display:none"></div>
     <div id="detail-splits-row"></div>
     <div id="detail-book-row"></div>
   </div>
@@ -1015,9 +1023,17 @@ propBets.forEach(b => {
 // Sort each player's history oldest→newest (for chart left→right)
 propList.forEach(pd => pd.bets.sort((a,b) => a.date.localeCompare(b.date)));
 
+// Index props by player so detail view can switch between markets
+const propsByPlayer = {};
+propList.forEach((pd, idx) => {
+  if (!propsByPlayer[pd.player]) propsByPlayer[pd.player] = [];
+  propsByPlayer[pd.player].push(idx);
+});
+
 let propStatFilter = 'all';
 let propTf = 'L10';
 let activeIdx = -1;
+let h2hOpp = null;
 
 // Build stat filter chips
 (function(){
@@ -1208,37 +1224,84 @@ function renderDetailView() {
   const seasonGames = seasonData.games || [];
   const hasSeasonData = seasonGames.length > 0;
   const sl  = STAT_LABELS[pd.stat] || pd.stat.replace(/^(Batter|Pitcher)\s+/, '');
-  const tfs = ['L5','L10','L15','all'];
-  const tfN = {L5:5,L10:10,L15:15,all:9999};
-  const tfLbls = {L5:'L5',L10:'L10',L15:'L15',all:'2025'};
 
-  // Timeframe buttons — hit rate from our bet history
+  // ── Prop selector dropdown (switch between markets for same player) ──
+  const playerIdxs = propsByPlayer[pd.player] || [activeIdx];
+  const selectorEl = document.getElementById('detail-prop-selector');
+  if (selectorEl) {
+    selectorEl.innerHTML = playerIdxs.length > 1
+      ? `<select class="detail-prop-select" onchange="switchProp(this.value)">` +
+          playerIdxs.map(i => {
+            const p = propList[i];
+            const lbl = STAT_LABELS[p.stat] || p.stat.replace(/^(Batter|Pitcher)\s+/, '');
+            return `<option value="${i}"${i===activeIdx?' selected':''}>${lbl} · ${p.side==='O'?'Over':'Under'} ${p.threshold}</option>`;
+          }).join('') +
+        `</select>`
+      : '';
+  }
+
+  // ── Timeframe buttons (L5/L10/L15/2025/H2H) ──
+  const tfs = ['L5','L10','L15','all','h2h'];
+  const tfN  = {L5:5,L10:10,L15:15,all:9999};
+  const tfLbls = {L5:'L5',L10:'L10',L15:'L15',all:'2025',h2h:'H2H'};
   document.getElementById('detail-tf-row').innerHTML = tfs.map(tf => {
-    const betSlice = getSlice(pd.bets, tf);
-    const hr = hitRate(betSlice);
-    const hrTxt = hr !== null ? hr + '%' : '—';
+    let hr = null, hrTxt = '—';
+    if (tf === 'h2h') {
+      if (hasSeasonData && h2hOpp) {
+        const oppGames = seasonGames.filter(g => g.opp === h2hOpp && g.val != null);
+        const hits = oppGames.filter(g => pd.side==='O' ? g.val >= pd.threshold : g.val <= pd.threshold).length;
+        if (oppGames.length) { hr = Math.round(hits/oppGames.length*100); hrTxt = hr+'%'; }
+      }
+    } else {
+      const betSlice = getSlice(pd.bets, tf);
+      hr = hitRate(betSlice);
+      hrTxt = hr !== null ? hr + '%' : '—';
+    }
     return `<button class="detail-tf-btn${tf===propTf?' active':''}" onclick="setDetailTf('${tf}')">
       <div class="detail-tf-lbl">${tfLbls[tf]}</div>
       <div class="detail-tf-rate" style="color:${rateColor(hr)}">${hrTxt}</div>
     </button>`;
   }).join('');
 
-  // Chart + AVG: prefer real MLB season data, fall back to bet history
+  // ── H2H opponent chip row ──
+  const h2hEl = document.getElementById('detail-h2h-row');
+  if (propTf === 'h2h' && hasSeasonData) {
+    const opps = [...new Set(seasonGames.filter(g=>g.opp).map(g=>g.opp))].sort();
+    if (!h2hOpp && opps.length) h2hOpp = opps[0];
+    h2hEl.style.display = '';
+    h2hEl.innerHTML = opps.length
+      ? `<div class="h2h-opp-row">` +
+          opps.map(opp => {
+            const oppGames = seasonGames.filter(g => g.opp === opp && g.val != null);
+            return `<button class="h2h-opp-btn${opp===h2hOpp?' active':''}" onclick="setH2hOpp('${opp}')">${opp} <span style="opacity:.55;font-weight:400">${oppGames.length}G</span></button>`;
+          }).join('') +
+        `</div>`
+      : `<div class="h2h-no-data">No opponent data available</div>`;
+  } else {
+    h2hEl.style.display = 'none';
+  }
+
+  // ── Chart + AVG ──
   if (hasSeasonData) {
-    const limit = tfN[propTf];
-    const chartGames = limit < 9999 ? seasonGames.slice(-limit) : seasonGames;
-    const validVals  = chartGames.filter(g=>g.val!=null).map(g=>g.val);
+    let chartGames;
+    if (propTf === 'h2h') {
+      chartGames = h2hOpp ? seasonGames.filter(g => g.opp === h2hOpp) : [];
+    } else {
+      const limit = tfN[propTf] || 9999;
+      chartGames = limit < 9999 ? seasonGames.slice(-limit) : seasonGames;
+    }
+    const validVals = chartGames.filter(g=>g.val!=null).map(g=>g.val);
     const avg = validVals.length ? (validVals.reduce((a,b)=>a+b,0)/validVals.length) : null;
     document.getElementById('detail-avg').textContent = avg!=null ? 'AVG: '+avg.toFixed(1) : '';
     document.getElementById('detail-chart-wrap').innerHTML = renderSeasonChart(chartGames, pd.threshold, pd.side);
   } else {
-    const betSlice = getSlice(pd.bets, propTf);
+    const betSlice = getSlice(pd.bets, propTf === 'h2h' ? 'all' : propTf);
     const avg = avgProj(betSlice);
     document.getElementById('detail-avg').textContent = avg!=null ? 'AVG: '+avg.toFixed(1) : '';
     document.getElementById('detail-chart-wrap').innerHTML = renderDetailChart(betSlice, pd.threshold);
   }
 
-  // Bat vs Pitch splits (vs RHP / vs LHP)
+  // ── Bat vs Pitch splits ──
   const splitsEl = document.getElementById('detail-splits-row');
   const splits = seasonData.splits || {};
   const splitEntries = Object.entries(splits);
@@ -1259,7 +1322,7 @@ function renderDetailView() {
     splitsEl.innerHTML = '';
   }
 
-  // Book row
+  // ── Book row ──
   const recent = pd.bets[pd.bets.length-1];
   document.getElementById('detail-book-row').innerHTML = `<div class="detail-book">
     <span class="detail-book-label">${recent ? recent.book : '?'}</span>
@@ -1270,6 +1333,7 @@ function renderDetailView() {
 
 function openDetail(idx) {
   activeIdx = idx;
+  h2hOpp = null;
   const pd = propList[idx];
   document.getElementById('props-list-view').style.display = 'none';
   document.getElementById('props-detail-view').style.display = '';
@@ -1281,13 +1345,28 @@ function openDetail(idx) {
 
 function closeDetail() {
   activeIdx = -1;
+  h2hOpp = null;
   document.getElementById('props-list-view').style.display = '';
   document.getElementById('props-detail-view').style.display = 'none';
 }
 
 function setDetailTf(tf) {
   propTf = tf;
-  document.querySelectorAll('.prop-tf-btn').forEach(b => b.classList.toggle('active', b.dataset.tf === tf));
+  if (tf !== 'h2h') h2hOpp = null;
+  renderDetailView();
+}
+
+function switchProp(idxStr) {
+  activeIdx = +idxStr;
+  h2hOpp = null;
+  const pd = propList[activeIdx];
+  const sl = STAT_LABELS[pd.stat] || pd.stat.replace(/^(Batter|Pitcher)\s+/, '');
+  document.getElementById('detail-prop-meta').textContent = (pd.side==='O'?'Over':'Under') + ' ' + pd.threshold + ' ' + sl;
+  renderDetailView();
+}
+
+function setH2hOpp(opp) {
+  h2hOpp = opp;
   renderDetailView();
 }
 
