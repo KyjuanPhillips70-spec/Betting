@@ -113,7 +113,7 @@ def read_db(db_path: str) -> dict:
     )
     _proj_num_re = re.compile(r'Proj:\s*([\d.]+)')
     prop_rows = [dict(r) for r in conn.execute("""
-        SELECT event, market, edge, stake_units,
+        SELECT event, market, line, book, edge, stake_units,
                result, profit_units, logged_at, projected_score
         FROM bets_log
         WHERE sport = 'MLB'
@@ -139,6 +139,8 @@ def read_db(db_path: str) -> dict:
             "side":      m.group(3),
             "threshold": float(m.group(4)),
             "event":     row.get("event") or "",
+            "line":      row.get("line") or "?",
+            "book":      row.get("book") or "?",
             "edge":      round(_safe_float(row.get("edge")) * 100, 1),
             "stake":     round(_safe_float(row.get("stake_units")), 2),
             "result":    row.get("result") or "",
@@ -461,36 +463,87 @@ footer{
 .tab-panel{display:none}
 .tab-panel.active{display:block}
 
-/* ── Player props section ── */
-.prop-controls{
-  display:flex;align-items:center;gap:.75rem;
-  margin-bottom:1rem;flex-wrap:wrap;
+/* ── Player props — filter bar ── */
+.prop-filter-bar{display:flex;flex-direction:column;gap:.65rem;margin-bottom:1rem}
+.prop-search-wrap{position:relative}
+.prop-search{
+  width:100%;background:var(--surf);border:1px solid var(--border2);
+  border-radius:var(--r);color:var(--t1);font-size:.82rem;font-family:inherit;
+  padding:.55rem .9rem .55rem 2.2rem;
 }
-.prop-select{
-  background:var(--surf);border:1px solid var(--border2);
-  color:var(--t1);border-radius:var(--r);
-  padding:.45rem .75rem;font-size:.78rem;font-family:inherit;
-  cursor:pointer;flex:1;min-width:160px;max-width:300px;
-  -webkit-appearance:none;appearance:none;
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%234E6480' d='M5 6L0 0h10z'/%3E%3C/svg%3E");
-  background-repeat:no-repeat;background-position:right .65rem center;
-  padding-right:2rem;
+.prop-search::placeholder{color:var(--tm)}
+.prop-search:focus{outline:none;border-color:var(--mlb)}
+.prop-search-icon{
+  position:absolute;left:.75rem;top:50%;transform:translateY(-50%);
+  color:var(--tm);font-size:.85rem;pointer-events:none;
 }
-.prop-select:focus{outline:none;border-color:var(--mlb)}
-.prop-select:disabled{opacity:.4;cursor:default}
-.prop-mini-strip{display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:.85rem}
-.prop-mini-tile{
+.prop-filter-lbl{font-size:.6rem;text-transform:uppercase;letter-spacing:.09em;color:var(--tm);margin-bottom:.35rem}
+.prop-filter-chips{display:flex;gap:.35rem;flex-wrap:wrap}
+.prop-count-row{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem}
+.prop-count{font-size:.68rem;color:var(--tm);font-variant-numeric:tabular-nums}
+
+/* ── Prop cards ── */
+.prop-cards{display:flex;flex-direction:column;gap:.65rem}
+.prop-card{
   background:var(--surf);border:1px solid var(--border);
-  border-radius:var(--r);padding:.5rem .85rem;
-  display:flex;flex-direction:column;align-items:center;min-width:72px;
+  border-radius:var(--r-lg);padding:.95rem 1.1rem;
+  display:flex;flex-direction:column;gap:.6rem;
+  transition:border-color .15s;
 }
-.prop-mini-val{
-  font-size:1.05rem;font-weight:700;
+.prop-card:hover{border-color:var(--border2)}
+.prop-card-hdr{display:flex;align-items:flex-start;justify-content:space-between;gap:.75rem}
+.prop-card-player{font-size:.95rem;font-weight:700;color:var(--t1);line-height:1.2}
+.prop-card-meta{font-size:.67rem;color:var(--tm);margin-top:.2rem}
+.prop-card-badges{display:flex;align-items:center;gap:.4rem;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end}
+
+.stat-chip{
+  display:inline-flex;align-items:center;
+  padding:.15rem .5rem;border-radius:4px;
+  font-size:.58rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;
+  background:rgba(200,128,15,.1);color:var(--amber);border:1px solid rgba(200,128,15,.2);
+  white-space:nowrap;
+}
+.result-badge{
+  display:inline-flex;align-items:center;
+  padding:.15rem .5rem;border-radius:4px;
+  font-size:.65rem;font-weight:700;white-space:nowrap;
+}
+.result-win{background:rgba(74,222,128,.1);color:var(--win);border:1px solid rgba(74,222,128,.2)}
+.result-loss{background:rgba(248,113,113,.1);color:var(--loss);border:1px solid rgba(248,113,113,.2)}
+.result-pend{background:var(--surf2);color:var(--tm);border:1px solid var(--border2)}
+
+/* Proj vs Line comparison block */
+.prop-comparison{
+  display:flex;align-items:center;gap:0;
+  background:var(--surf2);border-radius:var(--r);overflow:hidden;
+}
+.prop-comp-side{
+  flex:1;display:flex;flex-direction:column;align-items:center;
+  padding:.6rem .5rem;gap:.2rem;
+}
+.prop-comp-val{
+  font-size:1.45rem;font-weight:800;line-height:1;
   font-family:'Consolas','Menlo',monospace;font-variant-numeric:tabular-nums;
 }
-.prop-mini-lbl{font-size:.58rem;color:var(--tm);text-transform:uppercase;letter-spacing:.09em;margin-top:.2rem}
-.prop-chart-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:.5rem}
-.prop-chart-scroll canvas{display:block;min-height:220px}
+.prop-comp-lbl{font-size:.58rem;text-transform:uppercase;letter-spacing:.08em;color:var(--tm)}
+.prop-comp-mid{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  padding:.5rem .65rem;gap:.15rem;border-left:1px solid var(--border);border-right:1px solid var(--border);
+}
+.prop-comp-delta{font-size:.95rem;font-weight:800;font-family:'Consolas','Menlo',monospace;line-height:1}
+.prop-comp-tag{font-size:.55rem;color:var(--tm);text-transform:uppercase;letter-spacing:.06em;margin-top:.1rem}
+
+/* Card footer — odds row */
+.prop-card-ftr{display:flex;align-items:center;justify-content:space-between;gap:.5rem;flex-wrap:wrap}
+.prop-odds-row{display:flex;align-items:center;gap:.55rem}
+.prop-side-badge{font-size:.8rem;font-weight:800;color:var(--odds);font-family:'Consolas','Menlo',monospace}
+.prop-odds-line{font-size:.88rem;font-weight:700;color:var(--t1);font-family:'Consolas','Menlo',monospace}
+.prop-book-lbl{font-size:.63rem;color:var(--tm);text-transform:uppercase;letter-spacing:.05em;
+  background:var(--surf2);border:1px solid var(--border);border-radius:3px;padding:.1rem .35rem}
+.prop-right-row{display:flex;align-items:center;gap:.65rem}
+.prop-edge-val{font-size:.92rem;font-weight:800;color:var(--win);font-family:'Consolas','Menlo',monospace}
+.prop-stake-val{font-size:.7rem;color:var(--t2);font-family:'Consolas','Menlo',monospace}
+.prop-pnl-val{font-size:.78rem;font-weight:600;font-family:'Consolas','Menlo',monospace}
 
 /* ── Mobile (≤540px — iPhone 13 and similar) ── */
 @media(max-width:540px){
@@ -532,8 +585,10 @@ footer{
   /* Tabs on mobile */
   .tab{padding:.55rem .7rem;font-size:.65rem}
 
-  /* Prop controls full-width on mobile */
-  .prop-select{max-width:100%;font-size:.75rem}
+  /* Prop cards on mobile */
+  .prop-card{padding:.8rem .85rem}
+  .prop-comp-val{font-size:1.2rem}
+  .prop-card-player{font-size:.88rem}
 }
 </style>
 </head>
@@ -596,16 +651,36 @@ footer{
     <h2>Player Props History</h2>
     <div class="sec-rule"></div>
   </div>
-  <div class="prop-controls">
-    <select id="prop-player" class="prop-select"><option value="">Select player…</option></select>
-    <select id="prop-stat" class="prop-select" disabled><option value="">Select stat…</option></select>
+  <div class="prop-filter-bar">
+    <div class="prop-search-wrap">
+      <span class="prop-search-icon">&#9906;</span>
+      <input id="prop-search" class="prop-search" type="text" placeholder="Search player…" oninput="renderPropCards()">
+    </div>
+    <div>
+      <div class="prop-filter-lbl">Stat</div>
+      <div class="prop-filter-chips" id="prop-stat-chips"></div>
+    </div>
+    <div>
+      <div class="prop-filter-lbl">Result</div>
+      <div class="prop-filter-chips">
+        <button class="filter-chip active" data-result="all"     onclick="setResProp('all')">All</button>
+        <button class="filter-chip"         data-result="win"     onclick="setResProp('win')">Won</button>
+        <button class="filter-chip"         data-result="loss"    onclick="setResProp('loss')">Lost</button>
+        <button class="filter-chip"         data-result="pending" onclick="setResProp('pending')">Pending</button>
+      </div>
+    </div>
+    <div class="prop-count-row">
+      <span class="prop-count" id="prop-count"></span>
+      <div class="prop-filter-chips">
+        <button class="filter-chip active" data-psort="date"   onclick="setPropSort('date')">Newest</button>
+        <button class="filter-chip"         data-psort="edge"   onclick="setPropSort('edge')">Best Edge</button>
+        <button class="filter-chip"         data-psort="player" onclick="setPropSort('player')">Player A–Z</button>
+      </div>
+    </div>
   </div>
-  <div id="prop-mini-strip" class="prop-mini-strip" style="display:none"></div>
-  <div class="chart-card" id="prop-chart-card" style="display:none">
-    <div class="chart-title" id="prop-chart-title"></div>
-    <div class="prop-chart-scroll"><canvas id="prop-chart"></canvas></div>
-  </div>
-  <div class="no-picks" id="prop-empty">Select a player and stat above to see their prop history.</div>
+  <div id="prop-cards" class="prop-cards"></div>
+  <div class="no-picks" id="prop-no-results" style="display:none">No props match your filters.</div>
+  <div class="no-picks" id="prop-no-data">No player prop bets recorded yet — props will appear here after the next daily card run.</div>
 </div>
 
 <!-- Bet History -->
@@ -811,143 +886,150 @@ function initPerfCharts() {
 
 // ── Player Props ──────────────────────────────────────────────
 const propBets = D.prop_bets || [];
-const playerSel = document.getElementById('prop-player');
-const statSel   = document.getElementById('prop-stat');
-const propEmpty = document.getElementById('prop-empty');
-const propCard  = document.getElementById('prop-chart-card');
-const propMini  = document.getElementById('prop-mini-strip');
-let propChart   = null;
+let propStatFilter  = 'all';
+let propResFilter   = 'all';
+let propSortKey     = 'date';
 
-if (propBets.length) {
-  const players = [...new Set(propBets.map(p => p.player))].sort();
-  players.forEach(p => playerSel.add(new Option(p, p)));
-} else {
-  playerSel.disabled = true;
-  propEmpty.textContent = 'No player prop bets recorded yet — props will appear here after the next daily card run.';
+const STAT_LABELS = {
+  'Batter Hits':'Hits','Batter Total Bases':'Total Bases','Batter Home Runs':'HR',
+  'Batter Rbis':'RBI','Batter Walks':'Walks','Batter Strikeouts':'K (Bat)',
+  'Pitcher Strikeouts':'K','Pitcher Outs':'Outs',
+  'Pitcher Hits Allowed':'H Allow','Pitcher Walks':'BB Allow','Pitcher Earned Runs':'ER',
+};
+
+// Build stat chips
+const statChipsEl = document.getElementById('prop-stat-chips');
+if (statChipsEl && propBets.length) {
+  const uniqStats = [...new Set(propBets.map(p => p.stat))].sort();
+  statChipsEl.innerHTML =
+    `<button class="filter-chip active" data-pstat="all" onclick="setPropStat('all')">All</button>` +
+    uniqStats.map(s =>
+      `<button class="filter-chip" data-pstat="${s}" onclick="setPropStat('${s}')">${STAT_LABELS[s]||s.replace(/^(Batter|Pitcher)\s+/,'')}</button>`
+    ).join('');
 }
 
-function updateStatOptions(player) {
-  statSel.innerHTML = '<option value="">Select stat…</option>';
-  if (!player) { statSel.disabled = true; return; }
-  const stats = [...new Set(propBets.filter(p => p.player === player).map(p => p.stat))].sort();
-  stats.forEach(s => statSel.add(new Option(s.replace(/^(Batter|Pitcher)\s+/,''), s)));
-  statSel.disabled = false;
+function setPropStat(v) {
+  propStatFilter = v;
+  document.querySelectorAll('[data-pstat]').forEach(c => c.classList.toggle('active', c.dataset.pstat === v));
+  renderPropCards();
+}
+function setResProp(v) {
+  propResFilter = v;
+  document.querySelectorAll('[data-result]').forEach(c => c.classList.toggle('active', c.dataset.result === v));
+  renderPropCards();
+}
+function setPropSort(v) {
+  propSortKey = v;
+  document.querySelectorAll('[data-psort]').forEach(c => c.classList.toggle('active', c.dataset.psort === v));
+  renderPropCards();
 }
 
-function renderPropChart() {
-  const player = playerSel.value;
-  const stat   = statSel.value;
-  if (!player || !stat) {
-    propCard.style.display = 'none'; propMini.style.display = 'none';
-    propEmpty.style.display = ''; return;
+function renderPropCards() {
+  const query = (document.getElementById('prop-search')?.value || '').toLowerCase().trim();
+  let rows = propBets.filter(p => {
+    if (query && !p.player.toLowerCase().includes(query)) return false;
+    if (propStatFilter !== 'all' && p.stat !== propStatFilter) return false;
+    if (propResFilter === 'win'     && p.result !== 'win')  return false;
+    if (propResFilter === 'loss'    && p.result !== 'loss') return false;
+    if (propResFilter === 'pending' && p.result)            return false;
+    return true;
+  });
+
+  if (propSortKey === 'date')   rows.sort((a,b) => b.date.localeCompare(a.date));
+  if (propSortKey === 'edge')   rows.sort((a,b) => b.edge - a.edge);
+  if (propSortKey === 'player') rows.sort((a,b) => a.player.localeCompare(b.player));
+
+  const noData    = document.getElementById('prop-no-data');
+  const noResults = document.getElementById('prop-no-results');
+  const cards     = document.getElementById('prop-cards');
+  const countEl   = document.getElementById('prop-count');
+
+  if (!propBets.length) {
+    noData.style.display=''; noResults.style.display='none'; cards.innerHTML=''; return;
   }
-  const rows = propBets.filter(p => p.player === player && p.stat === stat);
-  rows.sort((a, b) => a.date.localeCompare(b.date));
+  noData.style.display = 'none';
+  if (!rows.length) {
+    noResults.style.display=''; cards.innerHTML='';
+    if (countEl) countEl.textContent = '0 props';
+    return;
+  }
+  noResults.style.display = 'none';
+  if (countEl) countEl.textContent = rows.length + ' prop' + (rows.length!==1?'s':'');
 
-  propEmpty.style.display = 'none';
-  propCard.style.display  = '';
-  propMini.style.display  = '';
+  cards.innerHTML = rows.map(p => {
+    const sl = STAT_LABELS[p.stat] || p.stat.replace(/^(Batter|Pitcher)\s+/,'');
 
-  // Mini summary strip
-  const won    = rows.filter(r => r.result === 'win').length;
-  const lost   = rows.filter(r => r.result === 'loss').length;
-  const pend   = rows.filter(r => !r.result).length;
-  const profit = rows.reduce((s, r) => s + r.profit, 0);
-  propMini.innerHTML = [
-    {v: rows.length,  l:'Bets',    c:'kpi-neu'},
-    {v: won,          l:'Won',     c:'kpi-up'},
-    {v: lost,         l:'Lost',    c:'kpi-dn'},
-    {v: pend,         l:'Pending', c:'kpi-neu'},
-    {v: (profit>=0?'+':'')+profit.toFixed(2)+'u', l:'P&L', c: profit>=0?'kpi-up':'kpi-dn'},
-  ].map(t => `<div class="prop-mini-tile"><div class="prop-mini-val ${t.c}">${t.v}</div><div class="prop-mini-lbl">${t.l}</div></div>`).join('');
+    const resBadge = p.result==='win'
+      ? '<span class="result-badge result-win">Win &#10003;</span>'
+      : p.result==='loss'
+      ? '<span class="result-badge result-loss">Loss &#10007;</span>'
+      : '<span class="result-badge result-pend">Pending</span>';
 
-  const statLabel = stat.replace(/^(Batter|Pitcher)\s+/, '');
-  document.getElementById('prop-chart-title').textContent =
-    player + ' — ' + statLabel + ' (' + rows.length + ' bet' + (rows.length !== 1 ? 's' : '') + ')';
-
-  const labels = rows.map(r => {
-    const parts = (r.event || '').split(' @ ');
-    const short = parts.length === 2
-      ? parts.map(t => t.trim().split(' ').slice(-1)[0]).join('@')
-      : (r.event || '').slice(0, 12);
-    return r.date.slice(5) + ' ' + short;
-  });
-  const barBg = rows.map(r =>
-    r.result==='win'  ? 'rgba(74,222,128,.75)'  :
-    r.result==='loss' ? 'rgba(248,113,113,.75)' : 'rgba(78,100,128,.45)'
-  );
-  const barBd = rows.map(r =>
-    r.result==='win'  ? '#4ADE80' :
-    r.result==='loss' ? '#F87171' : '#4E6480'
-  );
-
-  const canvas = document.getElementById('prop-chart');
-  canvas.style.width  = Math.max(600, rows.length * 38) + 'px';
-  canvas.style.height = '230px';
-
-  if (propChart) propChart.destroy();
-  propChart = new Chart(canvas, {
-    data: {
-      labels,
-      datasets: [
-        {
-          type: 'bar', label: 'Bet line',
-          data: rows.map(r => r.threshold),
-          backgroundColor: barBg, borderColor: barBd,
-          borderWidth: 1.5, borderRadius: 4, order: 2,
-        },
-        {
-          type: 'line', label: 'Projected',
-          data: rows.map(r => r.proj_stat),
-          borderColor: '#C8800F', backgroundColor: 'transparent',
-          borderWidth: 2, borderDash: [4, 3],
-          pointRadius: 4, pointBackgroundColor: '#C8800F',
-          pointBorderColor: '#0B1120', pointBorderWidth: 1,
-          tension: 0.2, spanGaps: true, order: 1,
-        }
-      ]
-    },
-    options: {
-      responsive: false, maintainAspectRatio: false,
-      interaction: {mode:'index', intersect:false},
-      plugins: {
-        legend: {
-          display: true, position: 'top', align: 'start',
-          labels: {color:'#8B9EC4', font:{size:10}, boxWidth:14, padding:14}
-        },
-        tooltip: {
-          callbacks: {
-            title: ctx => rows[ctx[0].dataIndex].event || '',
-            label: ctx => {
-              if (ctx.dataset.label === 'Projected')
-                return ctx.raw !== null ? 'Projected: ' + ctx.raw : null;
-              const r = rows[ctx.dataIndex];
-              return [
-                r.side + r.threshold + '  Edge: +' + r.edge + '%  Stake: ' + r.stake + 'u',
-                r.result ? 'Result: ' + (r.result==='win' ? 'Win ✓' : 'Loss ✗') : 'Result: Pending',
-              ];
-            }
-          }
-        }
-      },
-      scales: {
-        x: {
-          ticks: {color:'#4E6480', font:{size:8,family:'Consolas,Menlo,monospace'}, maxRotation:40, minRotation:30},
-          grid: {display:false}
-        },
-        y: {
-          title: {display:true, text:statLabel, color:'#8B9EC4', font:{size:10}},
-          ticks: {color:'#4E6480', font:{size:9}},
-          grid: {color:'rgba(30,46,70,.5)', borderDash:[3,3]},
-          beginAtZero: true,
-        }
-      }
+    // Proj vs Line block
+    const hasProj = p.proj_stat !== null && p.proj_stat !== undefined;
+    let compBlock = '';
+    if (hasProj) {
+      const delta = p.proj_stat - p.threshold;
+      const favorable = (p.side==='O' && delta>0) || (p.side==='U' && delta<0);
+      const deltaCol = favorable ? 'var(--win)' : 'var(--loss)';
+      const deltaStr = (delta>=0?'+':'') + delta.toFixed(1);
+      compBlock = `<div class="prop-comparison">
+        <div class="prop-comp-side">
+          <div class="prop-comp-val" style="color:var(--amber)">${p.proj_stat.toFixed(1)}</div>
+          <div class="prop-comp-lbl">Projected</div>
+        </div>
+        <div class="prop-comp-mid">
+          <div class="prop-comp-delta" style="color:${deltaCol}">${deltaStr}</div>
+          <div class="prop-comp-tag">${p.side==='O'?'vs over':'vs under'}</div>
+        </div>
+        <div class="prop-comp-side">
+          <div class="prop-comp-val" style="color:var(--t2)">${p.threshold.toFixed(1)}</div>
+          <div class="prop-comp-lbl">Line</div>
+        </div>
+      </div>`;
     }
-  });
+
+    // P&L
+    const pnlHtml = p.result
+      ? `<span class="prop-pnl-val ${p.profit>=0?'pnl-up':'pnl-dn'}">${p.profit>=0?'+':''}${p.profit.toFixed(2)}u</span>`
+      : '';
+
+    // Short event name
+    const ev = (p.event||'').split(' @ ');
+    const evShort = ev.length===2
+      ? ev[0].trim().split(' ').slice(-1)[0] + ' @ ' + ev[1].trim().split(' ').slice(-1)[0]
+      : (p.event||'');
+
+    return `<div class="prop-card">
+      <div class="prop-card-hdr">
+        <div>
+          <div class="prop-card-player">${p.player}</div>
+          <div class="prop-card-meta">${evShort} &middot; ${p.date.slice(5)}</div>
+        </div>
+        <div class="prop-card-badges">
+          <span class="stat-chip">${sl}</span>
+          ${resBadge}
+        </div>
+      </div>
+      ${compBlock}
+      <div class="prop-card-ftr">
+        <div class="prop-odds-row">
+          <span class="prop-side-badge">${p.side}${p.threshold}</span>
+          <span class="prop-odds-line">${p.line||'?'}</span>
+          <span class="prop-book-lbl">${p.book||'?'}</span>
+        </div>
+        <div class="prop-right-row">
+          <span class="prop-edge-val">+${p.edge}%</span>
+          <span class="prop-stake-val">${p.stake}u</span>
+          ${pnlHtml}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
 }
 
-playerSel.addEventListener('change', () => { updateStatOptions(playerSel.value); renderPropChart(); });
-statSel.addEventListener('change', renderPropChart);
+if (propBets.length) renderPropCards();
+else document.getElementById('prop-no-data').style.display = '';
 
 // ── Bet History ───────────────────────────────────────────────
 const bets = D.recent_bets;
