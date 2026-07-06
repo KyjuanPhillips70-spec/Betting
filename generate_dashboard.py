@@ -130,7 +130,7 @@ def read_db(db_path: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# HTML template
+# HTML template  (redesigned — validated palette, terminal typography, structured layout)
 # ---------------------------------------------------------------------------
 
 HTML = r"""<!DOCTYPE html>
@@ -138,170 +138,300 @@ HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>+EV Betting Bot — Dashboard</title>
+<title>+EV Bot — Dashboard</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 <style>
+/* ── Reset ── */
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+/* ── Design tokens — validated categorical palette (OKLCH dark mode) ── */
 :root{
-  --bg:#0F172A;--surface:#1E293B;--border:#334155;
-  --t1:#F1F5F9;--t2:#CBD5E1;--tm:#64748B;
-  --blue:#60A5FA;--teal:#34D399;--green:#4ADE80;
-  --red:#F87171;--yellow:#FACC15;--purple:#A78BFA;
-  --card-r:10px;
+  --bg:#0B1120; --surf:#111928; --surf2:#182236;
+  --border:#1E2E46; --border2:#253A56;
+  --t1:#E8EDF6; --t2:#8B9EC4; --tm:#4E6480;
+  --mlb:#5A7AE8; --soccer:#18A88A;
+  --amber:#C8800F; --rose:#E04868;
+  --win:#4ADE80; --loss:#F87171;
+  --odds:#E8A830;
+  --r:8px; --r-lg:12px;
 }
-body{background:var(--bg);color:var(--t1);
+
+html{scroll-behavior:smooth}
+body{
+  background:var(--bg);color:var(--t1);
   font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
-  min-height:100vh;padding:1.5rem 2rem}
+  font-size:14px;line-height:1.5;min-height:100vh;
+}
+
+.mono{font-family:'Consolas','Menlo','Monaco','Courier New',monospace}
+.tabnum{font-variant-numeric:tabular-nums}
+
+/* ── Shell ── */
+.shell{max-width:1400px;margin:0 auto;padding:1.25rem 1.5rem 3rem}
 
 /* ── Header ── */
-.hdr{display:flex;align-items:center;justify-content:space-between;
-  margin-bottom:2rem;flex-wrap:wrap;gap:.75rem}
-.hdr-left{display:flex;align-items:center;gap:.75rem}
-.logo{width:2.5rem;height:2.5rem;background:linear-gradient(135deg,#3B82F6,#10B981);
-  border-radius:8px;display:flex;align-items:center;justify-content:center;
-  font-size:1.25rem;font-weight:700}
-.hdr h1{font-size:1.25rem;font-weight:700;letter-spacing:-.02em}
-.hdr-sub{color:var(--tm);font-size:.8rem;margin-top:.1rem}
-.live-badge{display:flex;align-items:center;gap:.4rem;
-  background:rgba(74,222,128,.1);border:1px solid rgba(74,222,128,.3);
-  border-radius:20px;padding:.3rem .75rem;font-size:.78rem;color:var(--green)}
-.live-dot{width:6px;height:6px;background:var(--green);border-radius:50%;
-  animation:pulse 2s infinite}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:1.25rem 0 1rem;
+  border-bottom:1px solid rgba(200,128,15,.2);
+  gap:1rem;flex-wrap:wrap;
+}
+.hdr-brand{display:flex;align-items:center;gap:.75rem}
+.brand-icon{
+  width:36px;height:36px;flex-shrink:0;border-radius:var(--r);
+  background:linear-gradient(135deg,#5A7AE8,#18A88A);
+  display:flex;align-items:center;justify-content:center;
+  font-size:.7rem;font-weight:800;color:#fff;
+  font-family:'Consolas','Menlo',monospace;letter-spacing:-.02em;
+}
+.brand-text h1{font-size:.95rem;font-weight:700;letter-spacing:-.01em;color:var(--t1)}
+.brand-text .updated{
+  font-size:.68rem;color:var(--tm);margin-top:1px;
+  font-family:'Consolas','Menlo',monospace;
+}
+.hdr-right{display:flex;align-items:center;gap:1rem}
+.hdr-date{font-size:.72rem;color:var(--t2);font-family:'Consolas','Menlo',monospace;letter-spacing:.04em}
+.live-chip{
+  display:flex;align-items:center;gap:5px;
+  background:rgba(74,222,128,.08);border:1px solid rgba(74,222,128,.18);
+  border-radius:20px;padding:.2rem .65rem;
+  font-size:.65rem;font-weight:700;letter-spacing:.09em;color:#4ADE80;text-transform:uppercase;
+}
+.live-dot{
+  width:5px;height:5px;background:#4ADE80;border-radius:50%;
+  animation:pulse 2s ease-in-out infinite;
+}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.8)}}
 
-/* ── KPI row ── */
-.kpi-row{display:grid;
-  grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
-  gap:1rem;margin-bottom:2rem}
-.kpi{background:var(--surface);border:1px solid var(--border);
-  border-radius:var(--card-r);padding:1.1rem 1.25rem}
-.kpi-label{color:var(--tm);font-size:.72rem;text-transform:uppercase;
-  letter-spacing:.08em;margin-bottom:.4rem}
-.kpi-value{font-size:1.75rem;font-weight:700;line-height:1;letter-spacing:-.03em}
-.kpi-sub{color:var(--tm);font-size:.75rem;margin-top:.35rem}
-.up{color:var(--green)}.dn{color:var(--red)}.neu{color:var(--t2)}
+/* ── KPI strip ── */
+.kpi-strip{
+  display:grid;
+  grid-template-columns:repeat(6,1fr);
+  gap:.75rem;margin:1.25rem 0;
+}
+@media(max-width:1000px){.kpi-strip{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:600px){.kpi-strip{grid-template-columns:repeat(2,1fr)}}
 
-/* ── Section heading ── */
-.sec-head{font-size:1rem;font-weight:600;margin-bottom:1rem;
-  display:flex;align-items:center;gap:.5rem}
-.sec-head .badge{background:var(--border);border-radius:20px;
-  padding:.15rem .55rem;font-size:.72rem;color:var(--t2);font-weight:500}
+.kpi-tile{
+  background:var(--surf);border:1px solid var(--border);
+  border-radius:var(--r);padding:.9rem 1rem;
+  position:relative;overflow:hidden;
+}
+.kpi-tile::after{
+  content:'';position:absolute;top:0;left:0;right:0;height:2px;
+  background:var(--kpi-accent,var(--border2));
+  border-radius:var(--r) var(--r) 0 0;
+}
+.kpi-label{
+  font-size:.62rem;text-transform:uppercase;letter-spacing:.1em;
+  color:var(--tm);margin-bottom:.5rem;font-weight:600;
+}
+.kpi-value{
+  font-size:1.55rem;font-weight:700;line-height:1;
+  letter-spacing:-.03em;
+  font-family:'Consolas','Menlo',monospace;
+  font-variant-numeric:tabular-nums;
+}
+.kpi-sub{font-size:.65rem;color:var(--tm);margin-top:.35rem;font-variant-numeric:tabular-nums}
+.kpi-up{color:var(--win)}.kpi-dn{color:var(--loss)}.kpi-neu{color:var(--t2)}
 
-/* ── Today's picks ── */
-.picks-grid{display:grid;
-  grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1rem;
-  margin-bottom:2rem}
-.pick-card{background:var(--surface);border:1px solid var(--border);
-  border-radius:var(--card-r);padding:1rem 1.1rem;position:relative;
-  overflow:hidden}
-.pick-card::before{content:'';position:absolute;top:0;left:0;
-  width:3px;height:100%;background:var(--blue)}
-.pick-card.soccer::before{background:var(--teal)}
-.pick-sport{font-size:.68rem;text-transform:uppercase;letter-spacing:.1em;
-  color:var(--blue);font-weight:600;margin-bottom:.3rem}
-.pick-card.soccer .pick-sport{color:var(--teal)}
-.pick-event{font-size:.9rem;font-weight:600;margin-bottom:.2rem;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.pick-market{color:var(--t2);font-size:.82rem;margin-bottom:.75rem;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.pick-meta{display:flex;justify-content:space-between;align-items:flex-end}
-.pick-odds{display:flex;align-items:baseline;gap:.5rem}
-.pick-line{font-size:1.15rem;font-weight:700;color:var(--yellow)}
-.pick-book{font-size:.72rem;color:var(--tm)}
-.pick-stats{text-align:right}
-.pick-edge{font-size:.78rem;color:var(--green);font-weight:600}
-.pick-stake{font-size:.72rem;color:var(--tm);margin-top:.15rem}
-.no-picks{background:var(--surface);border:1px solid var(--border);
-  border-radius:var(--card-r);padding:2rem;text-align:center;
-  color:var(--tm);margin-bottom:2rem}
+/* ── Section rule ── */
+.sec{display:flex;align-items:center;gap:.6rem;margin:1.5rem 0 .85rem}
+.sec h2{font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--tm);white-space:nowrap}
+.sec-rule{flex:1;height:1px;background:var(--border)}
+.badge{
+  background:var(--surf2);border:1px solid var(--border2);border-radius:20px;
+  padding:.1rem .5rem;font-size:.65rem;color:var(--t2);font-weight:600;
+  font-variant-numeric:tabular-nums;
+}
 
-/* ── Charts row ── */
-.charts-row{display:grid;
-  grid-template-columns:2fr 1fr;gap:1rem;margin-bottom:2rem}
+/* ── Pick cards ── */
+.picks-grid{
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));
+  gap:.75rem;margin-bottom:.5rem;
+}
+.pick-card{
+  background:var(--surf);border:1px solid var(--border);
+  border-radius:var(--r-lg);padding:1rem 1.1rem;
+  position:relative;overflow:hidden;
+  display:flex;flex-direction:column;gap:.55rem;
+  transition:border-color .15s;
+}
+.pick-card:hover{border-color:var(--border2)}
+.pick-card::before{
+  content:'';position:absolute;top:0;left:0;width:3px;height:100%;
+  background:var(--card-accent,var(--mlb));
+  border-radius:var(--r-lg) 0 0 var(--r-lg);
+}
+.pick-card.soccer{--card-accent:var(--soccer)}
+
+.pick-top{display:flex;justify-content:space-between;align-items:flex-start}
+.pick-sport-chip{
+  display:inline-flex;align-items:center;
+  font-size:.58rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;
+  padding:.15rem .5rem;border-radius:4px;
+  background:rgba(90,122,232,.1);color:var(--mlb);
+  border:1px solid rgba(90,122,232,.18);
+}
+.pick-card.soccer .pick-sport-chip{
+  background:rgba(24,168,138,.1);color:var(--soccer);
+  border-color:rgba(24,168,138,.18);
+}
+.pick-edge-hero{
+  font-size:1.4rem;font-weight:800;color:var(--win);line-height:1;
+  font-family:'Consolas','Menlo',monospace;letter-spacing:-.02em;text-align:right;
+}
+.pick-edge-label{font-size:.56rem;text-transform:uppercase;letter-spacing:.08em;color:var(--tm);text-align:right;margin-top:1px}
+
+.pick-event{font-size:.88rem;font-weight:600;color:var(--t1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pick-market{font-size:.76rem;color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.pick-bottom{
+  display:flex;justify-content:space-between;align-items:center;
+  border-top:1px solid var(--border);padding-top:.55rem;margin-top:.1rem;
+}
+.pick-odds-wrap{display:flex;align-items:baseline;gap:.4rem}
+.pick-line{
+  font-size:1.05rem;font-weight:700;color:var(--odds);
+  font-family:'Consolas','Menlo',monospace;font-variant-numeric:tabular-nums;
+}
+.pick-book{font-size:.65rem;color:var(--tm);text-transform:uppercase;letter-spacing:.05em}
+.pick-stake{font-size:.7rem;color:var(--t2);font-family:'Consolas','Menlo',monospace}
+.pick-proj{font-size:.65rem;color:var(--tm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.no-picks{
+  background:var(--surf);border:1px solid var(--border);
+  border-radius:var(--r-lg);padding:2.5rem;
+  text-align:center;color:var(--tm);font-size:.82rem;
+}
+
+/* ── Charts ── */
+.charts-row{display:grid;grid-template-columns:7fr 4fr;gap:.75rem}
 @media(max-width:800px){.charts-row{grid-template-columns:1fr}}
-.chart-card{background:var(--surface);border:1px solid var(--border);
-  border-radius:var(--card-r);padding:1.25rem}
-.chart-wrap{position:relative;height:220px}
+.chart-card{
+  background:var(--surf);border:1px solid var(--border);
+  border-radius:var(--r-lg);padding:1.1rem 1.25rem 1rem;
+}
+.chart-title{
+  font-size:.65rem;font-weight:700;text-transform:uppercase;
+  letter-spacing:.1em;color:var(--tm);margin-bottom:.85rem;
+}
+.chart-wrap{position:relative;height:200px}
 
-/* ── Bet table ── */
-.tbl-wrap{background:var(--surface);border:1px solid var(--border);
-  border-radius:var(--card-r);overflow:hidden;margin-bottom:2rem}
-table{width:100%;border-collapse:collapse;font-size:.82rem}
-thead th{background:rgba(51,65,85,.6);padding:.7rem 1rem;
-  text-align:left;font-weight:500;color:var(--tm);
-  font-size:.7rem;text-transform:uppercase;letter-spacing:.07em;
-  white-space:nowrap;cursor:pointer;user-select:none}
-thead th:hover{color:var(--t2)}
-thead th.sort-asc::after{content:' ▲'}
-thead th.sort-desc::after{content:' ▼'}
-tbody tr{border-top:1px solid var(--border)}
-tbody tr:hover{background:rgba(51,65,85,.3)}
-tbody td{padding:.65rem 1rem;vertical-align:middle;white-space:nowrap}
-.cell-sport{display:inline-block;font-size:.65rem;text-transform:uppercase;
-  letter-spacing:.08em;padding:.15rem .45rem;border-radius:4px;font-weight:600}
-.sp-MLB{background:rgba(96,165,250,.15);color:var(--blue)}
-.sp-Soccer{background:rgba(52,211,153,.15);color:var(--teal)}
-.result-win{color:var(--green);font-weight:600}
-.result-loss{color:var(--red);font-weight:600}
-.result-pending{color:var(--tm)}
+/* ── Filter chips ── */
+.filter-row{display:flex;gap:.5rem;margin-bottom:.75rem;flex-wrap:wrap}
+.filter-chip{
+  background:var(--surf);border:1px solid var(--border);
+  border-radius:20px;padding:.25rem .75rem;
+  font-size:.68rem;font-weight:600;color:var(--t2);
+  cursor:pointer;transition:all .15s;
+  text-transform:uppercase;letter-spacing:.05em;
+  font-family:inherit;
+}
+.filter-chip:hover{border-color:var(--border2);color:var(--t1)}
+.filter-chip.active{background:var(--surf2);border-color:var(--mlb);color:var(--mlb)}
+.filter-chip[data-sport="Soccer"].active{border-color:var(--soccer);color:var(--soccer)}
+
+/* ── Table ── */
+.tbl-card{background:var(--surf);border:1px solid var(--border);border-radius:var(--r-lg);overflow:hidden}
 .tbl-scroll{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:.79rem;font-variant-numeric:tabular-nums}
+thead th{
+  padding:.65rem .9rem;text-align:left;
+  font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.09em;
+  color:var(--tm);white-space:nowrap;cursor:pointer;user-select:none;
+  border-bottom:1px solid var(--border);background:var(--surf2);
+}
+thead th:hover{color:var(--t2)}
+thead th.sort-asc::after{content:' ▲';font-size:.55em}
+thead th.sort-desc::after{content:' ▼';font-size:.55em}
+tbody tr{border-bottom:1px solid var(--border);transition:background .1s}
+tbody tr:last-child{border-bottom:none}
+tbody tr:hover{background:rgba(255,255,255,.02)}
+tbody td{padding:.58rem .9rem;vertical-align:middle;white-space:nowrap;color:var(--t1)}
+
+.sp-chip{
+  display:inline-flex;align-items:center;
+  font-size:.56rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;
+  padding:.15rem .45rem;border-radius:4px;
+}
+.sp-MLB{background:rgba(90,122,232,.1);color:var(--mlb);border:1px solid rgba(90,122,232,.18)}
+.sp-Soccer{background:rgba(24,168,138,.1);color:var(--soccer);border:1px solid rgba(24,168,138,.18)}
+.r-win{color:var(--win);font-weight:600}
+.r-loss{color:var(--loss);font-weight:600}
+.r-pend{color:var(--tm)}
+.pnl-up{color:var(--win)}.pnl-dn{color:var(--loss)}
 
 /* ── Footer ── */
-footer{color:var(--tm);font-size:.75rem;text-align:center;padding-top:1rem}
+footer{
+  text-align:center;color:var(--tm);font-size:.65rem;
+  padding-top:2rem;
+  font-family:'Consolas','Menlo',monospace;letter-spacing:.04em;
+}
 </style>
 </head>
 <body>
-<header class="hdr">
-  <div class="hdr-left">
-    <div class="logo">📈</div>
-    <div>
-      <h1>+EV Sports Betting Bot</h1>
-      <div class="hdr-sub" id="updated-at"></div>
+<div class="shell">
+
+<header>
+  <div class="hdr-brand">
+    <div class="brand-icon">+EV</div>
+    <div class="brand-text">
+      <h1>Sports Betting Dashboard</h1>
+      <div class="updated" id="updated-at"></div>
     </div>
   </div>
-  <div class="live-badge"><span class="live-dot"></span>Live dashboard</div>
+  <div class="hdr-right">
+    <div class="hdr-date" id="hdr-date"></div>
+    <div class="live-chip"><span class="live-dot"></span>Live</div>
+  </div>
 </header>
 
-<!-- KPI tiles -->
-<div class="kpi-row" id="kpi-row"></div>
+<div class="kpi-strip" id="kpi-strip"></div>
 
-<!-- Today's picks -->
-<div class="sec-head">
-  Today's Picks <span class="badge" id="picks-badge">0</span>
+<div class="sec">
+  <h2>Today's Picks</h2>
+  <span class="badge" id="picks-badge">0</span>
+  <div class="sec-rule"></div>
 </div>
 <div id="picks-container"></div>
 
-<!-- Charts -->
+<div class="sec">
+  <h2>Performance</h2>
+  <div class="sec-rule"></div>
+</div>
 <div class="charts-row">
   <div class="chart-card">
-    <div class="sec-head">Cumulative P&amp;L (units)</div>
+    <div class="chart-title">Cumulative P&amp;L (units)</div>
     <div class="chart-wrap"><canvas id="pnl-chart"></canvas></div>
   </div>
   <div class="chart-card">
-    <div class="sec-head">Top Markets</div>
+    <div class="chart-title">Top Markets</div>
     <div class="chart-wrap"><canvas id="mkt-chart"></canvas></div>
   </div>
 </div>
 
-<!-- Bet history -->
-<div class="sec-head">
-  Recent Bets <span class="badge" id="history-badge">0</span>
+<div class="sec" style="margin-top:1.75rem">
+  <h2>Bet History</h2>
+  <span class="badge" id="history-badge">0</span>
+  <div class="sec-rule"></div>
 </div>
-<div class="tbl-wrap">
+<div class="filter-row" id="filter-row"></div>
+<div class="tbl-card">
   <div class="tbl-scroll">
-    <table id="bet-table">
+    <table>
       <thead>
         <tr>
           <th onclick="sortTable(0)">Sport</th>
           <th onclick="sortTable(1)">Event</th>
           <th onclick="sortTable(2)">Market</th>
-          <th onclick="sortTable(3)">Book</th>
-          <th onclick="sortTable(4)">Line</th>
+          <th onclick="sortTable(3)">Line</th>
+          <th onclick="sortTable(4)">Book</th>
           <th onclick="sortTable(5)">Edge</th>
           <th onclick="sortTable(6)">Stake</th>
           <th onclick="sortTable(7)">Result</th>
           <th onclick="sortTable(8)">P&amp;L</th>
-          <th onclick="sortTable(9)">Logged</th>
+          <th onclick="sortTable(9)">Date</th>
         </tr>
       </thead>
       <tbody id="bet-tbody"></tbody>
@@ -309,203 +439,197 @@ footer{color:var(--tm);font-size:.75rem;text-align:center;padding-top:1rem}
   </div>
 </div>
 
-<footer>Generated by +EV Betting Bot · <span id="footer-date"></span></footer>
+<footer id="footer-text"></footer>
+</div>
 
 <script>
 const D = __DATA__;
 
-// ── Populate header ──────────────────────────────────────────────────────────
 document.getElementById('updated-at').textContent = 'Updated ' + D.generated_at;
-document.getElementById('footer-date').textContent = D.generated_at;
+document.getElementById('hdr-date').textContent = D.today;
 
-// ── KPI tiles ───────────────────────────────────────────────────────────────
+// KPI strip
 const s = D.stats;
 const kpis = [
-  { label:'Total Picks',   value: s.total_picks.toLocaleString(),
-    sub:'all time', cls:'neu' },
-  { label:'Win Rate',      value: s.n_resolved > 0 ? s.win_rate+'%' : 'N/A',
-    sub: s.n_resolved + ' resolved', cls: s.win_rate >= 52 ? 'up' : s.win_rate > 0 ? 'neu' : 'dn' },
-  { label:'ROI',           value: s.n_resolved > 0 ? (s.roi>0?'+':'')+s.roi+'%' : 'N/A',
-    sub:'on resolved bets', cls: s.roi > 0 ? 'up' : s.roi < 0 ? 'dn' : 'neu' },
-  { label:'Total P&L',     value: s.n_resolved > 0 ? (s.total_profit>0?'+':'')+s.total_profit+'u' : 'N/A',
-    sub:'units', cls: s.total_profit > 0 ? 'up' : s.total_profit < 0 ? 'dn' : 'neu' },
-  { label:'Avg Edge',      value: s.avg_edge+'%',
-    sub:'model vs market', cls: s.avg_edge >= 3 ? 'up' : 'neu' },
-  { label:'Avg CLV',       value: s.avg_clv !== null ? (s.avg_clv>0?'+':'')+s.avg_clv+'%' : 'N/A',
-    sub:'closing line value', cls: s.avg_clv > 0 ? 'up' : 'dn' },
+  { label:'Total Picks', sub:'all time', accent:'#5A7AE8',
+    value:s.total_picks.toLocaleString(), cls:'kpi-neu' },
+  { label:'Win Rate', sub:s.n_resolved+' resolved',
+    accent:s.win_rate>=52?'#4ADE80':'#8B9EC4',
+    value:s.n_resolved>0?s.win_rate+'%':'N/A',
+    cls:s.win_rate>=52?'kpi-up':'kpi-neu' },
+  { label:'ROI', sub:'on resolved bets',
+    accent:s.roi>0?'#4ADE80':s.roi<0?'#F87171':'#8B9EC4',
+    value:s.n_resolved>0?(s.roi>0?'+':'')+s.roi+'%':'N/A',
+    cls:s.roi>0?'kpi-up':s.roi<0?'kpi-dn':'kpi-neu' },
+  { label:'Total P&L', sub:'units profit',
+    accent:s.total_profit>0?'#4ADE80':s.total_profit<0?'#F87171':'#8B9EC4',
+    value:s.n_resolved>0?(s.total_profit>0?'+':'')+s.total_profit+'u':'N/A',
+    cls:s.total_profit>0?'kpi-up':s.total_profit<0?'kpi-dn':'kpi-neu' },
+  { label:'Avg Edge', sub:'model vs market', accent:'#C8800F',
+    value:s.avg_edge+'%', cls:s.avg_edge>=3?'kpi-up':'kpi-neu' },
+  { label:'Avg CLV', sub:'closing line value',
+    accent:s.avg_clv>0?'#4ADE80':'#8B9EC4',
+    value:s.avg_clv!==null?(s.avg_clv>0?'+':'')+s.avg_clv+'%':'N/A',
+    cls:s.avg_clv>0?'kpi-up':s.avg_clv<0?'kpi-dn':'kpi-neu' },
 ];
-document.getElementById('kpi-row').innerHTML = kpis.map(k => `
-  <div class="kpi">
+document.getElementById('kpi-strip').innerHTML = kpis.map(k=>`
+  <div class="kpi-tile" style="--kpi-accent:${k.accent}">
     <div class="kpi-label">${k.label}</div>
-    <div class="kpi-value ${k.cls}">${k.value}</div>
+    <div class="kpi-value ${k.cls} mono tabnum">${k.value}</div>
     <div class="kpi-sub">${k.sub}</div>
   </div>`).join('');
 
-// ── Today's picks ────────────────────────────────────────────────────────────
+// Today's picks
 const picks = D.today_picks;
 document.getElementById('picks-badge').textContent = picks.length;
 const pc = document.getElementById('picks-container');
 if (!picks.length) {
-  pc.innerHTML = '<div class="no-picks">No picks logged for today yet — run the bot or check back later.</div>';
+  pc.innerHTML = '<div class="no-picks">No picks logged for today yet — check back after the next run.</div>';
 } else {
-  pc.innerHTML = '<div class="picks-grid">' + picks.map(p => {
-    const sport = (p.sport||'').toLowerCase();
-    const edge  = ((p.edge||0)*100).toFixed(1);
-    const stake = (p.stake_units||0).toFixed(2);
-    const proj  = p.projected_score ? `<div style="color:var(--tm);font-size:.7rem;margin-top:.5rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.projected_score}</div>` : '';
-    return `<div class="pick-card ${sport==='soccer'?'soccer':''}">
-      <div class="pick-sport">${p.sport||'?'}</div>
+  pc.innerHTML = '<div class="picks-grid">'+picks.map(p=>{
+    const isSoccer=(p.sport||'').toLowerCase()==='soccer';
+    const edge=((p.edge||0)*100).toFixed(1);
+    const stake=(p.stake_units||0).toFixed(2);
+    const proj=p.projected_score?`<div class="pick-proj">${p.projected_score}</div>`:'';
+    return `<div class="pick-card ${isSoccer?'soccer':''}">
+      <div class="pick-top">
+        <span class="pick-sport-chip">${p.sport||'?'}</span>
+        <div><div class="pick-edge-hero">+${edge}%</div><div class="pick-edge-label">edge</div></div>
+      </div>
       <div class="pick-event" title="${p.event||''}">${p.event||'?'}</div>
       <div class="pick-market" title="${p.market||''}">${p.market||'?'}</div>
-      <div class="pick-meta">
-        <div class="pick-odds">
-          <span class="pick-line">${p.line||'?'}</span>
+      <div class="pick-bottom">
+        <div class="pick-odds-wrap">
+          <span class="pick-line mono">${p.line||'?'}</span>
           <span class="pick-book">${p.book||'?'}</span>
         </div>
-        <div class="pick-stats">
-          <div class="pick-edge">+${edge}% edge</div>
-          <div class="pick-stake">${stake}u stake</div>
-        </div>
+        <span class="pick-stake mono">${stake}u</span>
       </div>${proj}
     </div>`;
-  }).join('') + '</div>';
+  }).join('')+'</div>';
 }
 
-// ── P&L chart (line) ─────────────────────────────────────────────────────────
-// Form: change-over-time → line. One series. Color: green if cumulative > 0.
-const pnlData = D.daily_pnl;
-if (pnlData.length > 0) {
-  const labels = pnlData.map(r => r.day);
-  const vals   = pnlData.map(r => r.cumulative);
-  const lastVal = vals[vals.length - 1] || 0;
-  const lineColor = lastVal >= 0 ? '#4ADE80' : '#F87171';
-  const fillColor = lastVal >= 0 ? 'rgba(74,222,128,.12)' : 'rgba(248,113,113,.12)';
-
-  new Chart(document.getElementById('pnl-chart'), {
-    type: 'line',
-    data: {
-      labels,
-      datasets: [{
-        data: vals,
-        borderColor: lineColor,
-        backgroundColor: fillColor,
-        borderWidth: 2,
-        fill: true,
-        tension: 0.3,
-        pointRadius: vals.length > 30 ? 0 : 4,
-        pointHoverRadius: 6,
-        pointBackgroundColor: lineColor,
-      }]
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          callbacks: {
-            label: ctx => (ctx.raw >= 0 ? '+' : '') + ctx.raw.toFixed(2) + 'u'
-          }
-        }
-      },
-      scales: {
-        x: { ticks:{color:'#64748B',font:{size:10}}, grid:{color:'#1E293B'} },
-        y: {
-          ticks:{color:'#64748B',font:{size:10},
-            callback: v => (v>0?'+':'')+v+'u'},
-          grid:{color:'#334155'},
-          border:{dash:[4,4]}
-        }
+// P&L chart
+const pnlData=D.daily_pnl;
+if(pnlData.length>0){
+  const labels=pnlData.map(r=>r.day);
+  const vals=pnlData.map(r=>r.cumulative);
+  const lastVal=vals[vals.length-1]||0;
+  const lc=lastVal>=0?'#4ADE80':'#F87171';
+  const fc=lastVal>=0?'rgba(74,222,128,.07)':'rgba(248,113,113,.07)';
+  new Chart(document.getElementById('pnl-chart'),{
+    type:'line',
+    data:{labels,datasets:[{
+      data:vals,borderColor:lc,backgroundColor:fc,
+      borderWidth:1.5,fill:true,tension:.35,
+      pointRadius:vals.length>20?0:3,pointHoverRadius:5,pointBackgroundColor:lc,
+    }]},
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>(ctx.raw>=0?'+':'')+ctx.raw.toFixed(2)+'u'}}},
+      scales:{
+        x:{ticks:{color:'#4E6480',font:{size:9,family:'Consolas,Menlo,monospace'}},grid:{color:'rgba(30,46,70,.5)'}},
+        y:{ticks:{color:'#4E6480',font:{size:9,family:'Consolas,Menlo,monospace'},callback:v=>(v>0?'+':'')+v+'u'},grid:{color:'rgba(30,46,70,.8)',borderDash:[3,3]}}
       }
     }
   });
 } else {
-  document.getElementById('pnl-chart').parentElement.innerHTML =
-    '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--tm);font-size:.85rem">No resolved bets yet</div>';
+  document.getElementById('pnl-chart').parentElement.innerHTML=
+    '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--tm);font-size:.8rem">No resolved bets yet</div>';
 }
 
-// ── Market chart (horizontal bar) ────────────────────────────────────────────
-// Form: magnitude + identity → horizontal bar. Categorical colors: use border (neutral).
-const mkts = D.top_markets;
-if (mkts.length > 0) {
-  new Chart(document.getElementById('mkt-chart'), {
-    type: 'bar',
-    data: {
-      labels: mkts.map(m => m.market),
-      datasets: [{
-        data: mkts.map(m => m.count),
-        backgroundColor: mkts.map((_,i) => [
-          'rgba(96,165,250,.75)','rgba(52,211,153,.75)',
-          'rgba(167,139,250,.75)','rgba(250,204,21,.75)',
-          'rgba(251,146,60,.75)','rgba(248,113,113,.75)',
-          'rgba(96,165,250,.5)','rgba(52,211,153,.5)',
-        ][i % 8]),
-        borderWidth: 0,
-        borderRadius: 4,
+// Markets chart — categorical: fixed slot order, validated palette
+const mkts=D.top_markets;
+if(mkts.length>0){
+  const cats=['#5A7AE8','#18A88A','#C8800F','#E04868','#7B9BFF','#1EC09E','#D4960F','#F0607A'];
+  new Chart(document.getElementById('mkt-chart'),{
+    type:'bar',
+    data:{
+      labels:mkts.map(m=>m.market),
+      datasets:[{
+        data:mkts.map(m=>m.count),
+        backgroundColor:mkts.map((_,i)=>cats[i%cats.length]+'BB'),
+        borderColor:mkts.map((_,i)=>cats[i%cats.length]),
+        borderWidth:1,borderRadius:3,borderSkipped:'start',
       }]
     },
-    options: {
-      indexAxis: 'y',
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false },
-        tooltip: { callbacks: { label: ctx => ctx.raw + ' picks' } } },
-      scales: {
-        x: { ticks:{color:'#64748B',font:{size:10}}, grid:{color:'#334155'} },
-        y: { ticks:{color:'#CBD5E1',font:{size:11}}, grid:{display:false} }
+    options:{
+      indexAxis:'y',responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>ctx.raw+' picks'}}},
+      scales:{
+        x:{ticks:{color:'#4E6480',font:{size:9}},grid:{color:'rgba(30,46,70,.8)'}},
+        y:{ticks:{color:'#8B9EC4',font:{size:10,family:'Consolas,Menlo,monospace'}},grid:{display:false}}
       }
     }
   });
 } else {
-  document.getElementById('mkt-chart').parentElement.innerHTML =
-    '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--tm);font-size:.85rem">No bet history yet</div>';
+  document.getElementById('mkt-chart').parentElement.innerHTML=
+    '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--tm);font-size:.8rem">No data yet</div>';
 }
 
-// ── Bet history table ─────────────────────────────────────────────────────────
-const bets = D.recent_bets;
-document.getElementById('history-badge').textContent = bets.length;
-const tbody = document.getElementById('bet-tbody');
-tbody.innerHTML = bets.map(b => {
-  const edge  = b.edge  != null ? '+' + (b.edge*100).toFixed(1)+'%' : '—';
-  const stake = b.stake_units != null ? (b.stake_units).toFixed(2)+'u' : '—';
-  const resultCls = b.result === 'win'  ? 'result-win' :
-                    b.result === 'loss' ? 'result-loss' : 'result-pending';
-  const resultTxt = b.result || '⏳';
-  const pnl = b.profit_units != null
-    ? `<span class="${b.profit_units>=0?'up':'dn'}">${b.profit_units>=0?'+':''}${(+b.profit_units).toFixed(2)}u</span>`
-    : '—';
-  const logged = (b.logged_at||'').split(' ')[0];
-  const sp = b.sport || '?';
-  const spCls = sp === 'MLB' ? 'sp-MLB' : sp === 'Soccer' ? 'sp-Soccer' : '';
-  return `<tr>
-    <td><span class="cell-sport ${spCls}">${sp}</span></td>
-    <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis" title="${b.event||''}">${b.event||'?'}</td>
-    <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis" title="${b.market||''}">${b.market||'?'}</td>
-    <td>${b.book||'?'}</td>
-    <td style="font-weight:600;color:var(--yellow)">${b.line||'?'}</td>
-    <td style="color:var(--green)">${edge}</td>
-    <td>${stake}</td>
-    <td class="${resultCls}">${resultTxt}</td>
-    <td>${pnl}</td>
-    <td style="color:var(--tm)">${logged}</td>
-  </tr>`;
-}).join('');
+// Filter chips + table
+const bets=D.recent_bets;
+document.getElementById('history-badge').textContent=bets.length;
+const sports=['All',...new Set(bets.map(b=>b.sport||'?').filter(Boolean))];
+let activeSport='All';
+document.getElementById('filter-row').innerHTML=sports.map(sp=>
+  `<button class="filter-chip${sp==='All'?' active':''}" data-sport="${sp}" onclick="filterTable('${sp}')">${sp}</button>`
+).join('');
 
-// ── Sortable table ────────────────────────────────────────────────────────────
-let sortCol = -1, sortDir = 1;
-function sortTable(col) {
-  const ths = document.querySelectorAll('thead th');
-  ths.forEach((th, i) => { th.classList.remove('sort-asc','sort-desc'); });
-  if (sortCol === col) { sortDir *= -1; } else { sortDir = 1; sortCol = col; }
-  ths[col].classList.add(sortDir === 1 ? 'sort-asc' : 'sort-desc');
-  const rows = [...document.querySelectorAll('#bet-tbody tr')];
-  rows.sort((a, b) => {
-    const av = a.cells[col].textContent.trim();
-    const bv = b.cells[col].textContent.trim();
-    const an = parseFloat(av), bn = parseFloat(bv);
-    if (!isNaN(an) && !isNaN(bn)) return (an - bn) * sortDir;
-    return av.localeCompare(bv) * sortDir;
+function renderTable(sportFilter){
+  const rows=sportFilter==='All'?bets:bets.filter(b=>b.sport===sportFilter);
+  document.getElementById('bet-tbody').innerHTML=rows.map(b=>{
+    const edge=b.edge!=null?'+'+(b.edge*100).toFixed(1)+'%':'—';
+    const stake=b.stake_units!=null?( +b.stake_units).toFixed(2)+'u':'—';
+    const rCls=b.result==='win'?'r-win':b.result==='loss'?'r-loss':'r-pend';
+    const rTxt=b.result==='win'?'Win':b.result==='loss'?'Loss':'—';
+    const pnl=b.profit_units!=null
+      ?`<span class="${+b.profit_units>=0?'pnl-up':'pnl-dn'}">${+b.profit_units>=0?'+':''}${(+b.profit_units).toFixed(2)}u</span>`:'—';
+    const logged=(b.logged_at||'').split(' ')[0];
+    const sp=b.sport||'?';
+    const spCls=sp==='MLB'?'sp-MLB':sp==='Soccer'?'sp-Soccer':'';
+    return `<tr data-sport="${sp}">
+      <td><span class="sp-chip ${spCls}">${sp}</span></td>
+      <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis" title="${b.event||''}">${b.event||'?'}</td>
+      <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;color:var(--t2)" title="${b.market||''}">${b.market||'?'}</td>
+      <td class="mono" style="color:var(--odds)">${b.line||'?'}</td>
+      <td style="color:var(--tm)">${b.book||'?'}</td>
+      <td class="mono" style="color:var(--win)">${edge}</td>
+      <td class="mono">${stake}</td>
+      <td class="${rCls}">${rTxt}</td>
+      <td class="mono">${pnl}</td>
+      <td class="mono" style="color:var(--tm)">${logged}</td>
+    </tr>`;
+  }).join('');
+}
+
+function filterTable(sport){
+  activeSport=sport;
+  document.querySelectorAll('.filter-chip').forEach(c=>c.classList.remove('active'));
+  document.querySelector(`.filter-chip[data-sport="${sport}"]`).classList.add('active');
+  sortCol=-1;sortDir=1;
+  renderTable(sport);
+}
+
+renderTable('All');
+
+let sortCol=-1,sortDir=1;
+function sortTable(col){
+  const ths=document.querySelectorAll('thead th');
+  ths.forEach(th=>th.classList.remove('sort-asc','sort-desc'));
+  if(sortCol===col){sortDir*=-1}else{sortDir=1;sortCol=col}
+  ths[col].classList.add(sortDir===1?'sort-asc':'sort-desc');
+  const rows=[...document.querySelectorAll('#bet-tbody tr')];
+  rows.sort((a,b)=>{
+    const av=a.cells[col].textContent.trim(),bv=b.cells[col].textContent.trim();
+    const an=parseFloat(av),bn=parseFloat(bv);
+    if(!isNaN(an)&&!isNaN(bn))return(an-bn)*sortDir;
+    return av.localeCompare(bv)*sortDir;
   });
-  tbody.append(...rows);
+  document.getElementById('bet-tbody').append(...rows);
 }
+
+document.getElementById('footer-text').textContent='+EV Betting Bot · '+D.generated_at;
 </script>
 </body>
 </html>
