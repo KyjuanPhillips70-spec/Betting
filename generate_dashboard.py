@@ -901,8 +901,9 @@ footer{
     <div class="prop-filter-bar">
       <div class="prop-search-wrap">
         <span class="prop-search-icon">&#9906;</span>
-        <input id="prop-search" class="prop-search" type="text" placeholder="Search player…" oninput="renderPropList()">
+        <input id="prop-search" class="prop-search" type="text" placeholder="Search any MLB player…" oninput="renderPropList()">
       </div>
+      <div style="font-size:.68rem;color:var(--tm);padding:.25rem .1rem 0;letter-spacing:.01em">Showing today's active players · type a name to search all MLB rosters</div>
       <div>
         <div class="prop-filter-lbl">Stat</div>
         <div class="prop-filter-chips" id="prop-stat-chips"></div>
@@ -1311,7 +1312,11 @@ function renderPropList() {
   const rowsEl = document.getElementById('prop-rows');
   const noData = document.getElementById('prop-no-data');
   const filtered = masterDisplayList.filter(entry => {
+    // Without a search query, only show bet-tracked props and today's lineup players
+    if (!query && entry.type === 'stats' && !entry.isToday) return false;
+    // Name search — reveals full roster
     if (query && !entry.player.toLowerCase().includes(query)) return false;
+    // Stat filter applies to bet entries only
     if (entry.type === 'bet' && propStatFilter !== 'all') {
       if (propList[entry.propIdx].stat !== propStatFilter) return false;
     }
@@ -1319,7 +1324,9 @@ function renderPropList() {
   });
   if (!filtered.length) {
     noData.style.display = '';
-    noData.textContent = masterDisplayList.length ? 'No props match your filters.' : 'No player prop data available.';
+    noData.textContent = query
+      ? `No players found matching "${query}".`
+      : 'No active lineup data yet — check back closer to game time.';
     rowsEl.innerHTML = '';
     return;
   }
