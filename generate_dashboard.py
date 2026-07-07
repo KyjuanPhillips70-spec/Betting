@@ -657,6 +657,29 @@ header{
 .pick-row-meta{text-align:right}
 .pick-row-book{font-size:.6rem;color:var(--tm);text-transform:uppercase;letter-spacing:.05em}
 .pick-row-stake{font-size:.68rem;color:var(--t2);font-family:'Consolas','Menlo',monospace}
+/* Pick type badges */
+.pick-type{display:inline-flex;align-items:center;padding:.1rem .38rem;border-radius:3px;font-size:.54rem;font-weight:800;letter-spacing:.07em;text-transform:uppercase;margin-right:.38rem;border:1px solid;vertical-align:middle;white-space:nowrap}
+.pick-type.ml{background:rgba(90,122,232,.12);color:var(--mlb);border-color:rgba(90,122,232,.3)}
+.pick-type.spread{background:rgba(24,168,138,.12);color:#18A88A;border-color:rgba(24,168,138,.3)}
+.pick-type.total{background:rgba(200,128,15,.12);color:var(--amber);border-color:rgba(200,128,15,.3)}
+.pick-type.nrfi{background:rgba(124,185,232,.12);color:#7CB9E8;border-color:rgba(124,185,232,.3)}
+.pick-type.prop{background:rgba(248,113,113,.12);color:var(--loss);border-color:rgba(248,113,113,.3)}
+.pick-type.other{background:rgba(139,158,196,.1);color:var(--t2);border-color:rgba(139,158,196,.2)}
+/* Prob/fair row */
+.pick-prob-row{font-size:.62rem;color:var(--tm);margin-top:.18rem;display:flex;gap:.6rem;flex-wrap:wrap}
+.pick-prob-lbl{color:var(--t2);font-weight:600}
+/* Daily Player Props tab */
+.daily-props-grid{display:flex;flex-direction:column;gap:.5rem;margin-top:.25rem}
+.dp-card{background:var(--surf);border:1px solid var(--border);border-radius:var(--r-lg);padding:.85rem 1rem}
+.dp-card-top{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;margin-bottom:.55rem}
+.dp-player{font-size:.95rem;font-weight:800;color:var(--t1)}
+.dp-edge{font-size:1.1rem;font-weight:800;color:var(--win);font-family:'Consolas','Menlo',monospace;line-height:1}
+.dp-stat{font-size:.72rem;color:var(--t2);margin-top:.2rem;display:flex;align-items:center;gap:.35rem;flex-wrap:wrap}
+.dp-bottom{display:flex;align-items:center;justify-content:space-between;gap:.5rem;flex-wrap:wrap;padding-top:.5rem;border-top:1px solid var(--border)}
+.dp-line{font-size:.92rem;font-weight:700;color:var(--odds);font-family:'Consolas','Menlo',monospace}
+.dp-ou-badge{display:inline-flex;align-items:center;padding:.1rem .4rem;border-radius:3px;font-size:.62rem;font-weight:800;font-family:'Consolas','Menlo',monospace}
+.dp-ou-badge.over{background:rgba(74,222,128,.12);color:var(--win);border:1px solid rgba(74,222,128,.25)}
+.dp-ou-badge.under{background:rgba(248,113,113,.12);color:var(--loss);border:1px solid rgba(248,113,113,.25)}
 
 .no-picks{
   background:var(--surf);border:1px solid var(--border);
@@ -921,6 +944,7 @@ footer{
   <button class="tab active" role="tab" data-tab="picks">Today&thinsp;<span class="tab-badge" id="tab-picks-badge">0</span></button>
   <button class="tab" role="tab" data-tab="performance">Performance</button>
   <button class="tab" role="tab" data-tab="props">Player Props</button>
+  <button class="tab" role="tab" data-tab="dailyprops">Daily Props&thinsp;<span class="tab-badge" id="tab-dailyprops-badge">0</span></button>
   <button class="tab" role="tab" data-tab="history">History&thinsp;<span class="tab-badge" id="tab-history-badge">0</span></button>
 </div>
 
@@ -996,6 +1020,15 @@ footer{
     <div id="detail-hand-splits-row"></div>
     <div id="detail-book-row"></div>
   </div>
+</div>
+
+<!-- Daily Player Props -->
+<div id="tab-dailyprops" class="tab-panel">
+  <div class="sec" style="margin-top:1rem">
+    <h2>Daily Player Props</h2>
+    <div class="sec-rule"></div>
+  </div>
+  <div id="dailyprops-container"></div>
 </div>
 
 <!-- Bet History -->
@@ -1103,15 +1136,23 @@ if (!picks.length) {
   pc.innerHTML='<div class="game-list">'+gameList.map(([event,group],idx)=>{
     const isSoccer=(group.sport||'').toLowerCase()==='soccer';
     const rowsHtml=group.picks.map(p=>{
-      const edge=((p.edge||0)*100).toFixed(1);
+      const edgeNum=((p.edge||0)*100);
+      const edge=edgeNum.toFixed(1);
+      const edgeStr=(edgeNum>0?'+':'')+edge+'%';
       const stake=(p.stake_units||0).toFixed(2);
+      const type=pickType(p.market||'');
+      const typeBadge=`<span class="pick-type ${type}">${TYPE_LABELS[type]}</span>`;
+      const mProb=p.model_prob!=null?Math.round(p.model_prob*100)+'%':null;
+      const fProb=p.fair_prob!=null?Math.round(p.fair_prob*100)+'%':null;
+      const probRow=(mProb||fProb)?`<div class="pick-prob-row">${mProb?`<span><span class="pick-prob-lbl">Model:</span> ${mProb}</span>`:''} ${fProb?`<span><span class="pick-prob-lbl">Fair:</span> ${fProb}</span>`:''}</div>`:'';
       const proj=p.projected_score?`<div class="pick-row-proj">${p.projected_score}</div>`:'';
       return `<div class="pick-row">
         <div class="pick-row-left">
-          <div class="pick-row-market">${p.market||'?'}</div>${proj}
+          <div class="pick-row-market">${typeBadge}${p.market||'?'}</div>
+          ${probRow}${proj}
         </div>
         <div class="pick-row-right">
-          <span class="pick-row-edge">+${edge}%</span>
+          <span class="pick-row-edge">${edgeStr}</span>
           <span class="pick-row-line">${p.line||'?'}</span>
           <div class="pick-row-meta">
             <div class="pick-row-book">${p.book||'?'}</div>
@@ -1205,6 +1246,17 @@ const STAT_LABELS = {
   'Pitcher Strikeouts':'K','Pitcher Outs':'Outs',
   'Pitcher Hits Allowed':'H Allow','Pitcher Walks':'BB Allow','Pitcher Earned Runs':'ER',
 };
+const TYPE_LABELS = {ml:'ML', spread:'Spread', total:'Total', nrfi:'NRFI', prop:'Prop', other:'Pick'};
+function pickType(market) {
+  const m = (market || '').toLowerCase();
+  if (/\bnrfi\b/.test(m)) return 'nrfi';
+  if (/\bmoneyline\b|\bml\b/.test(m)) return 'ml';
+  if (/\bspread\b|\brunline\b|\bpuck.?line\b|\bgoal.?line\b/.test(m)) return 'spread';
+  if (/batter|pitcher/.test(m)) return 'prop';
+  if (/\btotal\b|\bover\b|\bunder\b/.test(m)) return 'total';
+  return 'other';
+}
+const _propMarketRe = /^(.+?)\s+((?:Batter|Pitcher)(?:\s+\w+)+)\s+([OU])(\d+(?:\.\d+)?)$/;
 const BATTER_PROP_TYPES = ['Batter Hits','Batter Total Bases','Batter Home Runs','Batter Rbis','Batter Walks','Batter Strikeouts'];
 const PITCHER_PROP_TYPES = ['Pitcher Strikeouts','Pitcher Outs','Pitcher Hits Allowed','Pitcher Walks','Pitcher Earned Runs'];
 const STAT_KEYS = {
@@ -1885,6 +1937,76 @@ function setH2hOpp(opp) {
 }
 
 renderPropList();
+
+// ── Daily Player Props ────────────────────────────────────────
+function renderDailyProps() {
+  const dpc = document.getElementById('dailyprops-container');
+  if (!dpc) return;
+  const propPicks = (D.today_picks || []).filter(p => _propMarketRe.test((p.market || '').trim()));
+  const badge = document.getElementById('tab-dailyprops-badge');
+  if (badge) badge.textContent = propPicks.length;
+  if (!propPicks.length) {
+    dpc.innerHTML = '<div class="no-picks">No player prop picks for today yet — check back after the next daily card run.</div>';
+    return;
+  }
+  dpc.innerHTML = '<div class="daily-props-grid">' + propPicks.map(p => {
+    const raw = (p.market || '').trim();
+    const m = _propMarketRe.exec(raw);
+    if (!m) return '';
+    const [, player, stat, side, threshStr] = m;
+    const thresh = parseFloat(threshStr);
+    const sl = STAT_LABELS[stat] || stat.replace(/^(Batter|Pitcher)\s+/, '');
+    const edgeNum = (p.edge || 0) * 100;
+    const edgeStr = (edgeNum > 0 ? '+' : '') + edgeNum.toFixed(1) + '%';
+    const mProb = p.model_prob != null ? Math.round(p.model_prob * 100) + '%' : null;
+    const fProb = p.fair_prob != null ? Math.round(p.fair_prob * 100) + '%' : null;
+    const ouCls = side === 'O' ? 'over' : 'under';
+    const ouLbl = side === 'O' ? 'O' : 'U';
+    const isPitcher = stat.startsWith('Pitcher');
+    const pEntry = playerByName[player.toLowerCase()];
+    const pid = pEntry ? String(pEntry.pid) : '';
+    const matchup = pid ? ((D.today_lineups && D.today_lineups.matchups) || {})[pid] : null;
+    let matchupHtml = '';
+    if (matchup && matchup.pitcher_name) {
+      const hand = matchup.pitcher_hand || '';
+      const hCls = hand === 'L' ? 'lhp' : hand === 'R' ? 'rhp' : 'switch';
+      const hLbl = hand === 'L' ? 'LHP' : hand === 'R' ? 'RHP' : hand || '?';
+      matchupHtml = `<span class="matchup-hand-badge ${hCls}" style="width:auto;height:auto;border-radius:4px;padding:.1rem .38rem;font-size:.6rem">${hLbl}</span>&thinsp;<span style="color:var(--t2)">${matchup.pitcher_name}</span>`;
+    }
+    const probRow = (mProb || fProb)
+      ? `<div class="pick-prob-row" style="justify-content:flex-end;margin-top:.22rem">${mProb?`<span><span class="pick-prob-lbl">Model:</span> ${mProb}</span>`:''} ${fProb?`<span><span class="pick-prob-lbl">Fair:</span> ${fProb}</span>`:''}</div>` : '';
+    const projScore = p.projected_score ? `<div style="font-size:.67rem;color:var(--tm);margin-top:.22rem">${p.projected_score}</div>` : '';
+    return `<div class="dp-card">
+      <div class="dp-card-top">
+        <div style="min-width:0;flex:1">
+          <div class="dp-player">${player}</div>
+          <div class="dp-stat">
+            <span class="stat-chip-sm">${sl}</span>
+            <span>${isPitcher ? 'Pitcher' : 'Batter'}</span>
+            ${matchupHtml ? '&middot;&nbsp;' + matchupHtml : ''}
+          </div>
+          ${projScore}
+        </div>
+        <div style="text-align:right;flex-shrink:0">
+          <div class="dp-edge">${edgeStr}</div>
+          <div style="font-size:.58rem;color:var(--tm);margin-top:.12rem;letter-spacing:.07em;text-transform:uppercase">Edge</div>
+          ${probRow}
+        </div>
+      </div>
+      <div class="dp-bottom">
+        <div style="display:flex;align-items:center;gap:.5rem">
+          <span class="dp-ou-badge ${ouCls}">${ouLbl}&thinsp;${thresh}</span>
+          <span class="dp-line">${p.line || '?'}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:.65rem">
+          <span style="font-size:.65rem;color:var(--tm);text-transform:uppercase;letter-spacing:.05em">${p.book || '?'}</span>
+          <span style="font-size:.78rem;font-weight:700;color:var(--t2);font-family:'Consolas','Menlo',monospace">${(p.stake_units || 0).toFixed(2)}u</span>
+        </div>
+      </div>
+    </div>`;
+  }).join('') + '</div>';
+}
+renderDailyProps();
 
 // ── Bet History ───────────────────────────────────────────────
 const bets = D.recent_bets;
