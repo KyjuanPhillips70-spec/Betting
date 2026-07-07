@@ -1116,6 +1116,19 @@ document.querySelectorAll('.tab').forEach(tab => {
   });
 });
 
+// ── Shared helpers (must be declared before any inline render code) ──
+const TYPE_LABELS = {ml:'ML', spread:'Spread', total:'Total', nrfi:'NRFI', prop:'Prop', other:'Pick'};
+function pickType(market) {
+  const m = (market || '').toLowerCase();
+  if (/\bnrfi\b/.test(m)) return 'nrfi';
+  if (/\bmoneyline\b|\bml\b/.test(m)) return 'ml';
+  if (/\bspread\b|\brunline\b|\bpuck.?line\b|\bgoal.?line\b/.test(m)) return 'spread';
+  if (/batter|pitcher/.test(m)) return 'prop';
+  if (/\btotal\b|\bover\b|\bunder\b/.test(m)) return 'total';
+  return 'other';
+}
+const _propMarketRe = /^(.+?)\s+((?:Batter|Pitcher)(?:\s+\w+)+)\s+([OU])(\d+(?:\.\d+)?)$/;
+
 // ── Today's picks ─────────────────────────────────────────────
 const picks = D.today_picks;
 document.getElementById('tab-picks-badge').textContent = picks.length;
@@ -1246,17 +1259,6 @@ const STAT_LABELS = {
   'Pitcher Strikeouts':'K','Pitcher Outs':'Outs',
   'Pitcher Hits Allowed':'H Allow','Pitcher Walks':'BB Allow','Pitcher Earned Runs':'ER',
 };
-const TYPE_LABELS = {ml:'ML', spread:'Spread', total:'Total', nrfi:'NRFI', prop:'Prop', other:'Pick'};
-function pickType(market) {
-  const m = (market || '').toLowerCase();
-  if (/\bnrfi\b/.test(m)) return 'nrfi';
-  if (/\bmoneyline\b|\bml\b/.test(m)) return 'ml';
-  if (/\bspread\b|\brunline\b|\bpuck.?line\b|\bgoal.?line\b/.test(m)) return 'spread';
-  if (/batter|pitcher/.test(m)) return 'prop';
-  if (/\btotal\b|\bover\b|\bunder\b/.test(m)) return 'total';
-  return 'other';
-}
-const _propMarketRe = /^(.+?)\s+((?:Batter|Pitcher)(?:\s+\w+)+)\s+([OU])(\d+(?:\.\d+)?)$/;
 const BATTER_PROP_TYPES = ['Batter Hits','Batter Total Bases','Batter Home Runs','Batter Rbis','Batter Walks','Batter Strikeouts'];
 const PITCHER_PROP_TYPES = ['Pitcher Strikeouts','Pitcher Outs','Pitcher Hits Allowed','Pitcher Walks','Pitcher Earned Runs'];
 const STAT_KEYS = {
