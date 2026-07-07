@@ -1396,6 +1396,7 @@ async function fetchGameLogClient(pid, statType) {
         games.push({date:(sp.date||'').slice(0,10), opp:opp.abbreviation||opp.teamName||'', val:val!=null?parseFloat(val):null});
       }
     }
+    games.sort((a, b) => a.date.localeCompare(b.date));
     _glCache[key] = games;
     return games;
   } catch(e) {
@@ -1543,12 +1544,14 @@ function renderPropList() {
 
 // Chart from actual MLB season game log data
 function renderSeasonChart(games, thresh, side) {
-  const valid = games.filter(g => g.val != null);
+  // Sort chronologically so bars always go oldest→newest left→right
+  const sorted = [...games].sort((a, b) => a.date.localeCompare(b.date));
+  const valid = sorted.filter(g => g.val != null);
   if (!valid.length) return '<div style="padding:2rem;text-align:center;color:var(--tm);font-size:.8rem">No game data available</div>';
   const n = valid.length;
-  const H=185, ML=32, MR=8, MT=22, MB=42;
+  // Extra bottom margin for 45° rotated date labels
+  const H=200, ML=32, MR=8, MT=22, MB=58;
   const cH=H-MT-MB;
-  // Dynamic width so full-season charts scroll
   const minBw = n > 20 ? 14 : Math.max(14, 320/n);
   const W = ML + MR + n*minBw + (n-1)*3;
   const cW = W - ML - MR;
@@ -1562,18 +1565,21 @@ function renderSeasonChart(games, thresh, side) {
     return `<line x1="${ML}" y1="${y.toFixed(1)}" x2="${ML+cW}" y2="${y.toFixed(1)}" stroke="rgba(30,46,70,.7)" stroke-width=".5"/>
     <text x="${(ML-4)}" y="${(y+3).toFixed(1)}" text-anchor="end" fill="#3A506A" font-size="8" font-family="Consolas,Menlo,monospace">${v}</text>`;
   }).join('');
+  // Date interval: show every Nth label so they don't collide at smaller bar widths
+  const dateEvery = n > 50 ? 10 : n > 30 ? 5 : n > 18 ? 3 : n > 10 ? 2 : 1;
   const bars = valid.map((g, i) => {
     const x = ML + i*(bw+3);
     const barTop = sy(g.val), barH = Math.max(2, cH-(barTop-MT));
     const hit = side==='O' ? g.val >= thresh : g.val <= thresh;
     const col = hit ? '#4ADE80' : '#F87171';
     const showLbl = n <= 25;
-    const showDate = n <= 20;
     const showOpp = n <= 12;
     const v = g.val % 1 === 0 ? g.val : g.val.toFixed(1);
     const valLbl = showLbl ? `<text x="${(x+bw/2).toFixed(1)}" y="${(barTop-4).toFixed(1)}" text-anchor="middle" fill="#E8EDF6" font-size="9" font-family="Consolas,Menlo,monospace">${v}</text>` : '';
-    const dateLbl = showDate ? `<text x="${(x+bw/2).toFixed(1)}" y="${(MT+cH+13).toFixed(1)}" text-anchor="middle" fill="#4E6480" font-size="8" font-family="Consolas,Menlo,monospace">${g.date.slice(5)}</text>` : '';
-    const oppLbl = showOpp && g.opp ? `<text x="${(x+bw/2).toFixed(1)}" y="${(MT+cH+24).toFixed(1)}" text-anchor="middle" fill="#2D4060" font-size="7" font-family="Consolas,Menlo,monospace">${g.opp}</text>` : '';
+    // Rotated date label — anchored at top of label, rotated -45° so it fans down-left
+    const cx = (x+bw/2).toFixed(1), cy = (MT+cH+10).toFixed(1);
+    const dateLbl = (i % dateEvery === 0) ? `<text x="${cx}" y="${cy}" text-anchor="start" fill="#4E6480" font-size="8" font-family="Consolas,Menlo,monospace" transform="rotate(-45,${cx},${cy})">${g.date.slice(5)}</text>` : '';
+    const oppLbl = showOpp && g.opp ? `<text x="${(x+bw/2).toFixed(1)}" y="${(MT+cH+46).toFixed(1)}" text-anchor="middle" fill="#2D4060" font-size="7" font-family="Consolas,Menlo,monospace">${g.opp}</text>` : '';
     return `<rect x="${x.toFixed(1)}" y="${barTop.toFixed(1)}" width="${bw.toFixed(1)}" height="${barH.toFixed(1)}" rx="3" fill="${col}" fill-opacity=".9"/>${valLbl}${dateLbl}${oppLbl}`;
   }).join('');
   const lineY = sy(thresh);
@@ -1747,7 +1753,8 @@ function renderDetailView() {
     document.getElementById('detail-chart-wrap').innerHTML = renderDetailChart(betSlice, pd.threshold);
   }
 
-  // ── Bat vs Pitch splits (bet-tracked only) ──
+  // ── Bat vs Pitch splits (bet-tracked only) — enriched with hand-split batting stats ──
+  const isBatter = isStatsOnly ? activeStatsEntry.pos !== 'P' : !propList[activeIdx].stat.startsWith('Pitcher');
   const splitsEl = document.getElementById('detail-splits-row');
   const splits = isStatsOnly ? {} : (seasonData.splits || {});
   const splitEntries = Object.entries(splits);
@@ -1766,49 +1773,64 @@ function renderDetailView() {
           : supports === false
           ? `<div class="split-support-badge split-support-no">&#8593; Opposes ${effSide==='O'?'Over':'Under'}</div>`
           : '';
-        const avgRow = s.avg && s.avg!=='---' ? `<div class="split-avg">${s.avg}</div><div class="split-ops">OPS ${s.ops||'---'}</div>` : '';
+        // Enrich with hand-split general batting stats (AVG, OPS, OBP, SLG, HR, RBI, K, BB, AB)
+        const hsKey = hand === 'vs RHP' ? 'vsR' : hand === 'vs LHP' ? 'vsL' : null;
+        const hs = (hsKey && activeBatterSplits) ? activeBatterSplits[hsKey] : null;
+        const avgRow = hs
+          ? `<div class="split-avg">${hs.avg}</div><div class="split-ops">OPS ${hs.ops} &middot; OBP ${hs.obp} &middot; SLG ${hs.slg}</div>`
+          : (s.avg && s.avg!=='---' ? `<div class="split-avg">${s.avg}</div><div class="split-ops">OPS ${s.ops||'---'}</div>` : '');
+        const extraStats = hs
+          ? `<div class="hand-split-stats" style="margin-top:.28rem">${hs.hr} HR &middot; ${hs.rbi} RBI &middot; ${hs.k} K &middot; ${hs.bb} BB &middot; ${hs.ab} AB &middot; ${hs.g}G</div>`
+          : '';
         return `<div class="split-card" style="box-shadow:inset 3px 0 0 ${borderCol};border-color:${borderCol}">
           <div class="split-title">${hand}</div>
           ${badge}
           ${avgRow}
           <div class="split-stat">${s.stat} ${sl}</div>
           <div class="split-meta">${s.g} G &middot; ${perG}/G</div>
+          ${extraStats}
         </div>`;
       }).join('') + `</div>`;
   } else if (splitsEl) {
     splitsEl.innerHTML = '';
   }
 
-  // ── vs LHP / RHP splits + today's matchup (batters only) ──
+  // ── vs LHP / RHP + today's matchup ──
+  // For stats-only batters: show full hand-split cards here (no bet splits above)
+  // For bet-tracked batters: show only today's matchup (stats already in splits-row above)
   const handSplitsEl = document.getElementById('detail-hand-splits-row');
   if (handSplitsEl) {
-    const isBatter = isStatsOnly ? activeStatsEntry.pos !== 'P' : !propList[activeIdx].stat.startsWith('Pitcher');
     if (isBatter) {
       const pid = isStatsOnly ? String(activeStatsEntry.pid) : String((playerByName[pd.player.toLowerCase()] || {}).pid || '');
       const hs = activeBatterSplits;
       const matchup = pid ? ((D.today_lineups && D.today_lineups.matchups) || {})[pid] : null;
-      let html = `<div class="sec" style="margin:.85rem 0 .4rem"><h2>vs LHP &amp; RHP</h2><div class="sec-rule"></div></div>`;
-      if (hs && (hs.vsL || hs.vsR)) {
-        html += `<div class="hand-splits-wrap">`;
-        [['vsL','vs LHP','lhp'],['vsR','vs RHP','rhp']].forEach(([k,label,cls]) => {
-          const s = hs[k];
-          if (s) {
-            html += `<div class="hand-split-card">
-              <div class="hand-split-hand ${cls}">${label}</div>
-              <div class="hand-split-avg">${s.avg}</div>
-              <div class="hand-split-ops">OPS ${s.ops} &middot; OBP ${s.obp} &middot; SLG ${s.slg}</div>
-              <div class="hand-split-stats">${s.hr} HR &middot; ${s.rbi} RBI &middot; ${s.k} K &middot; ${s.bb} BB &middot; ${s.ab} AB &middot; ${s.g}G</div>
-            </div>`;
-          } else {
-            html += `<div class="hand-split-card"><div class="hand-split-hand ${cls}">${label}</div><div style="color:var(--tm);font-size:.75rem;margin-top:.5rem">No data</div></div>`;
-          }
-        });
-        html += `</div>`;
-      } else if (hs !== null) {
-        html += `<div style="color:var(--tm);font-size:.78rem;padding:.4rem 0 .7rem">No split data available for 2025.</div>`;
-      } else {
-        html += `<div class="detail-loading" style="height:70px"><div class="detail-spinner"></div>Loading splits…</div>`;
+      let html = '';
+      if (isStatsOnly) {
+        // Stats-only: full vs LHP/RHP section
+        html += `<div class="sec" style="margin:.85rem 0 .4rem"><h2>vs LHP &amp; RHP</h2><div class="sec-rule"></div></div>`;
+        if (hs && (hs.vsL || hs.vsR)) {
+          html += `<div class="hand-splits-wrap">`;
+          [['vsL','vs LHP','lhp'],['vsR','vs RHP','rhp']].forEach(([k,label,cls]) => {
+            const s = hs[k];
+            if (s) {
+              html += `<div class="hand-split-card">
+                <div class="hand-split-hand ${cls}">${label}</div>
+                <div class="hand-split-avg">${s.avg}</div>
+                <div class="hand-split-ops">OPS ${s.ops} &middot; OBP ${s.obp} &middot; SLG ${s.slg}</div>
+                <div class="hand-split-stats">${s.hr} HR &middot; ${s.rbi} RBI &middot; ${s.k} K &middot; ${s.bb} BB &middot; ${s.ab} AB &middot; ${s.g}G</div>
+              </div>`;
+            } else {
+              html += `<div class="hand-split-card"><div class="hand-split-hand ${cls}">${label}</div><div style="color:var(--tm);font-size:.75rem;margin-top:.5rem">No data</div></div>`;
+            }
+          });
+          html += `</div>`;
+        } else if (hs !== null) {
+          html += `<div style="color:var(--tm);font-size:.78rem;padding:.4rem 0 .7rem">No split data available for 2025.</div>`;
+        } else {
+          html += `<div class="detail-loading" style="height:70px"><div class="detail-spinner"></div>Loading splits…</div>`;
+        }
       }
+      // Always show today's matchup card if available
       if (matchup && matchup.pitcher_name) {
         const hand = matchup.pitcher_hand || '';
         const handCls = hand === 'L' ? 'lhp' : hand === 'R' ? 'rhp' : 'switch';
