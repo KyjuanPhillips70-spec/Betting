@@ -64,3 +64,12 @@ jobs:
           path: betting_bot.db
           retention-days: 90
           overwrite: true
+
+      - name: Trigger dashboard deployment
+        if: always()
+        run: |
+          curl -s -X POST \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${{ github.repository }}/actions/workflows/deploy_dashboard.yml/dispatches \
+            -d '{"ref":"claude/ev-sports-betting-bot-e1eaf1"}'
