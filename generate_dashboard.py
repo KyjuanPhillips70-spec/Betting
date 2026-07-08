@@ -13,6 +13,7 @@ Free hosting options for the output file:
 from __future__ import annotations
 import argparse
 import json
+import os
 import re
 import sqlite3
 import time
@@ -919,6 +920,21 @@ footer{
   .detail-player{font-size:1.05rem}
   .detail-chart-wrap{padding:.5rem .25rem .5rem 0}
 }
+
+/* ── P4.3 Flag banner ── */
+.flag-banner{
+  display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;
+  padding:.4rem 1rem;
+  background:#131f34;border:1px solid #1E2E46;
+  border-radius:var(--r);margin:.5rem 0;
+  font-size:.72rem;
+}
+.flag-banner-label{color:var(--t2);white-space:nowrap}
+.flag-chip{
+  background:#1a2c4a;color:var(--mlb);
+  padding:.15rem .45rem;border-radius:4px;
+  font-weight:600;letter-spacing:.02em;white-space:nowrap;
+}
 </style>
 </head>
 <body>
@@ -1066,6 +1082,27 @@ footer{
 
 <script>
 const D = __DATA__;
+
+// P4.3 — Feature flag banner (shown only when at least one flag is ON)
+(function(){
+  const FLAG_LABELS = {
+    USE_LOGIT_FACTORS:       'Logit Factors',
+    USE_FULL_EXTRA_INNINGS:  'Full Extra Innings',
+    ENABLE_EDGE_VERIFY_GATE: 'Edge Verify Gate',
+    ENABLE_SAMPLE_GATE:      'Sample Gate',
+  };
+  const active = Object.entries(D.sim_flags || {})
+    .filter(([,v]) => v)
+    .map(([k]) => FLAG_LABELS[k] || k);
+  if (active.length) {
+    const banner = document.createElement('div');
+    banner.className = 'flag-banner';
+    banner.innerHTML = '<span class="flag-banner-label">Sim flags active:</span>' +
+      active.map(f => `<span class="flag-chip">${f}</span>`).join('');
+    const header = document.querySelector('header');
+    header.parentNode.insertBefore(banner, header.nextSibling);
+  }
+})();
 
 document.getElementById('updated-at').textContent = 'Updated ' + D.generated_at;
 document.getElementById('hdr-date').textContent = D.today;
@@ -2119,6 +2156,16 @@ def generate(db_path: str, out_path: str) -> None:
             "stats": {"total_picks":0,"n_resolved":0,"n_wins":0,"win_rate":0,
                       "roi":0,"total_profit":0,"avg_edge":0,"avg_clv":None},
         }
+    def _flag(name: str) -> bool:
+        return os.getenv(name, "0").strip().lower() in ("1", "true", "yes")
+
+    data["sim_flags"] = {
+        "USE_LOGIT_FACTORS":       _flag("USE_LOGIT_FACTORS"),
+        "USE_FULL_EXTRA_INNINGS":  _flag("USE_FULL_EXTRA_INNINGS"),
+        "ENABLE_EDGE_VERIFY_GATE": _flag("ENABLE_EDGE_VERIFY_GATE"),
+        "ENABLE_SAMPLE_GATE":      _flag("ENABLE_SAMPLE_GATE"),
+    }
+
     html = HTML.replace("__DATA__", json.dumps(data, default=str))
     Path(out_path).write_text(html, encoding="utf-8")
     print(f"Dashboard written → {out_path}")

@@ -247,8 +247,8 @@ def test_flag_off_matches_baseline():
     away = build_dummy_lineup()
     p    = PlayerProfile("p_ref", "Ref Pitcher", "R", LEAGUE_RATES.copy())
 
-    random.seed(baseline["seed"])
-    result = run_monte_carlo(home, away, p, p, n_sims=baseline["n_sims"])
+    result = run_monte_carlo(home, away, p, p, n_sims=baseline["n_sims"],
+                             rng=random.Random(baseline["seed"]))
 
     assert result["home_win_prob"] == baseline["home_win_prob"], \
         f"home_win_prob: {result['home_win_prob']} != {baseline['home_win_prob']}"
