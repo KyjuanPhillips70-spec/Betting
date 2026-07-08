@@ -37,6 +37,9 @@ jobs:
       - name: Initialize / migrate database
         run: python main.py --init-db
 
+      - name: Run tests
+        run: python -m pytest tests/ -v --tb=short
+
       - name: Run daily card (MLB + Soccer)
         run: python main.py --sport all --sims 5000
         env:
