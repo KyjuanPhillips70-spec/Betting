@@ -12,3 +12,4 @@ APScheduler>=3.10.0
 loguru>=0.7.0
 requests-cache>=1.1.0
 cloudscraper>=1.2.71
+pytest>=7.4.0
