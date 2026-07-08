@@ -218,7 +218,7 @@ def read_db(db_path: str) -> dict:
     """)]
 
     today_str = date.today().isoformat()
-    today_picks = [dict(r) for r in conn.execute("""
+    _picks_raw = [dict(r) for r in conn.execute("""
         SELECT sport, event, market, book, line,
                model_prob, fair_prob, edge, stake_units, projected_score,
                DATE(logged_at) AS game_date
@@ -228,8 +228,15 @@ def read_db(db_path: str) -> dict:
           AND market NOT LIKE '% Pitcher %'
         ORDER BY edge DESC
     """, (today_str,))]
+    # Deduplicate: same game + market → keep the best-edge book only
+    _seen_picks: dict = {}
+    for r in _picks_raw:
+        k = (r["event"], r["market"])
+        if k not in _seen_picks:
+            _seen_picks[k] = r
+    today_picks = list(_seen_picks.values())
 
-    today_props = [dict(r) for r in conn.execute("""
+    _props_raw = [dict(r) for r in conn.execute("""
         SELECT sport, event, market, book, line,
                model_prob, fair_prob, edge, stake_units, projected_score,
                DATE(logged_at) AS game_date
@@ -238,6 +245,13 @@ def read_db(db_path: str) -> dict:
           AND (market LIKE '% Batter %' OR market LIKE '% Pitcher %')
         ORDER BY edge DESC
     """, (today_str,))]
+    # Deduplicate: same player prop + market → keep the best-edge book only
+    _seen_props: dict = {}
+    for r in _props_raw:
+        k = (r["event"], r["market"])
+        if k not in _seen_props:
+            _seen_props[k] = r
+    today_props = list(_seen_props.values())
 
     daily_rows = [dict(r) for r in conn.execute("""
         SELECT DATE(logged_at) AS day,
@@ -827,6 +841,7 @@ footer{
 
 <div class="tabs" role="tablist">
   <button class="tab active" role="tab" data-tab="picks">Today&thinsp;<span class="tab-badge" id="tab-picks-badge">0</span></button>
+  <button class="tab" role="tab" data-tab="evprops">EV Props&thinsp;<span class="tab-badge" id="tab-evprops-badge">0</span></button>
   <button class="tab" role="tab" data-tab="performance">Performance</button>
   <button class="tab" role="tab" data-tab="props">Player Props</button>
   <button class="tab" role="tab" data-tab="history">History&thinsp;<span class="tab-badge" id="tab-history-badge">0</span></button>
@@ -839,6 +854,15 @@ footer{
     <div class="sec-rule"></div>
   </div>
   <div id="picks-container"></div>
+</div>
+
+<!-- Today's EV Props -->
+<div id="tab-evprops" class="tab-panel">
+  <div class="sec" style="margin-top:1rem">
+    <h2>Today&#39;s High EV Props</h2>
+    <div class="sec-rule"></div>
+  </div>
+  <div id="today-props-container"></div>
 </div>
 
 <!-- Performance -->
@@ -861,11 +885,6 @@ footer{
 
 <!-- Player Props -->
 <div id="tab-props" class="tab-panel">
-  <!-- Today's High EV Props -->
-  <div style="margin-bottom:1.5rem">
-    <div style="font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--t2);margin-bottom:.75rem">Today&#39;s High EV Props</div>
-    <div id="today-props-container"></div>
-  </div>
   <!-- List View -->
   <div id="props-list-view">
     <div class="prop-filter-bar">
@@ -1129,23 +1148,26 @@ function initPerfCharts() {
   }
 }
 
-// ── Today's High EV Props ─────────────────────────────────────
+// ── Today's High EV Props tab ─────────────────────────────────
 (function(){
   const tp = D.today_props || [];
+  const badge = document.getElementById('tab-evprops-badge');
+  if (badge) badge.textContent = tp.length;
   const el = document.getElementById('today-props-container');
   if (!el) return;
   if (!tp.length) {
-    el.innerHTML = '<div class="no-picks" style="margin-bottom:1.5rem">No high-EV player props for today yet.</div>';
+    el.innerHTML = '<div class="no-picks">No high-EV player props logged for today yet — check back after the next run.</div>';
     return;
   }
-  el.innerHTML = tp.map(p=>{
+  el.innerHTML = '<div class="game-list">' + tp.map(p=>{
     const edge=((p.edge||0)*100).toFixed(1);
     const stake=(p.stake_units||0).toFixed(2);
     const proj=p.projected_score?`<div class="pick-row-proj">${p.projected_score}</div>`:'';
-    return `<div class="pick-row">
+    const dateStr=p.game_date?`<span class="game-date">${p.game_date}</span>`:'';
+    return `<div class="pick-row" style="border-radius:8px;background:var(--surf2);padding:.75rem 1rem;margin-bottom:.5rem">
       <div class="pick-row-left">
         <div class="pick-row-market">${p.market||'?'}</div>
-        <div style="font-size:.65rem;color:var(--tm)">${p.event||''}</div>
+        <div style="font-size:.65rem;color:var(--tm);margin-top:.2rem">${p.event||''} ${dateStr}</div>
         ${proj}
       </div>
       <div class="pick-row-right">
@@ -1157,7 +1179,7 @@ function initPerfCharts() {
         </div>
       </div>
     </div>`;
-  }).join('');
+  }).join('') + '</div>';
 })();
 
 // ── Player Props ──────────────────────────────────────────────
