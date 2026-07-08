@@ -30,6 +30,22 @@ MODEL_WEIGHT = float(os.getenv("MODEL_WEIGHT",       "0.40"))
 
 _SANITY_DISAGREEMENT = 0.30
 
+# ---------------------------------------------------------------------------
+# Priority 3 — Sanity gates (default OFF)
+# ---------------------------------------------------------------------------
+
+# 3.1 — Flag high edges as likely stale lines
+ENABLE_EDGE_VERIFY_GATE  = os.getenv("ENABLE_EDGE_VERIFY_GATE",  "0").strip().lower() in ("1", "true", "yes")
+EDGE_VERIFY_THRESHOLD    = float(os.getenv("EDGE_VERIFY_THRESHOLD", "0.065"))
+
+# 3.2 — Require minimum sample behind prop projections
+ENABLE_SAMPLE_GATE       = os.getenv("ENABLE_SAMPLE_GATE",  "0").strip().lower() in ("1", "true", "yes")
+MIN_PROP_SAMPLE          = int(os.getenv("MIN_PROP_SAMPLE", "40"))
+
+# 3.3 — Mean-total band check (runs with ENABLE_EDGE_VERIFY_GATE)
+_MEAN_TOTAL_MIN = 6.5
+_MEAN_TOTAL_MAX = 11.5
+
 # Player prop market keys (Odds API) → sim distribution stat keys
 BATTER_PROP_MARKETS: dict[str, str] = {
     "batter_hits":        "hits",
@@ -66,10 +82,19 @@ def _blend(model_p: float, fair_p: float) -> float:
 
 def _make_alert(sport: str, event: str, market_label: str,
                 model_p: float, fair_p: float,
-                best_snap: dict) -> BetAlert | None:
+                best_snap: dict,
+                mean_total: float | None = None) -> BetAlert | None:
     blended_p = _blend(model_p, fair_p)
     edge = blended_p - fair_p
     if edge < MIN_EDGE:
+        return None
+
+    # 3.1 — Withold suspiciously large edges; they usually mean a stale line
+    if ENABLE_EDGE_VERIFY_GATE and edge >= EDGE_VERIFY_THRESHOLD:
+        logger.warning(
+            "Edge verify gate: {:.1%} edge on {} | {} exceeds threshold {:.1%} — withheld.",
+            edge, event, market_label, EDGE_VERIFY_THRESHOLD,
+        )
         return None
 
     raw_diff = abs(model_p - fair_p)
@@ -118,6 +143,15 @@ def find_mlb_edges(game: dict, sim: dict, snapshots: list[dict]) -> list[BetAler
     alerts: list[BetAlert] = []
     event = f"{game.get('away_team','?')} @ {game.get('home_team','?')}"
 
+    # 3.3 — Mean-total band check
+    mean_total = sim.get("mean_total", 0.0)
+    if (ENABLE_EDGE_VERIFY_GATE
+            and not (_MEAN_TOTAL_MIN <= mean_total <= _MEAN_TOTAL_MAX)):
+        logger.warning(
+            "Mean-total band check: {:.2f} outside [{}, {}] for {} — totals skipped.",
+            mean_total, _MEAN_TOTAL_MIN, _MEAN_TOTAL_MAX, event,
+        )
+
     h2h = [s for s in snapshots if s.get("market") == "h2h"]
     best_home = _best_by_outcome(h2h, game.get("home_team", "home"))
     best_away = _best_by_outcome(h2h, game.get("away_team", "away"))
@@ -132,7 +166,10 @@ def find_mlb_edges(game: dict, sim: dict, snapshots: list[dict]) -> list[BetAler
             if a:
                 alerts.append(a)
 
-    alerts.extend(_check_totals("MLB", event, snapshots, sim))
+    skip_totals = (ENABLE_EDGE_VERIFY_GATE
+                   and not (_MEAN_TOTAL_MIN <= mean_total <= _MEAN_TOTAL_MAX))
+    if not skip_totals:
+        alerts.extend(_check_totals("MLB", event, snapshots, sim))
     alerts.extend(_check_run_line(event, snapshots, sim,
                                   game.get("home_team", "home"),
                                   game.get("away_team", "away")))
@@ -353,6 +390,16 @@ def find_player_prop_edges(game: dict, sim: dict,
                 continue
 
             stat_arr = np.asarray(stat_dist)
+
+            # 3.2 — Require minimum PA/BF sample behind the projection
+            if ENABLE_SAMPLE_GATE:
+                sample_size = int(stat_arr.sum()) if stat_key in ("hits", "k") else len(stat_arr)
+                if sample_size < MIN_PROP_SAMPLE:
+                    logger.debug(
+                        "Sample gate: {} {} sample={} < {} — skipped.",
+                        player_name, market_key, sample_size, MIN_PROP_SAMPLE,
+                    )
+                    continue
             lines_seen: set[float] = set()
             for snap in snaps:
                 pt = snap.get("point")

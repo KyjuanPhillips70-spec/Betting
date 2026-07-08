@@ -1,0 +1,33 @@
+{
+  "_note": "Baseline captured before any upgrades. seed=42, two league-avg lineups, 50k sims. All upgrade flags default OFF must reproduce this exactly.",
+  "seed": 42,
+  "n_sims": 50000,
+  "home_win_prob": 0.49994,
+  "mean_total": 8.82548,
+  "over_probs": {
+    "over_5_5": 0.75032,
+    "over_6_0": 0.67604,
+    "over_6_5": 0.67604,
+    "over_7_0": 0.56688,
+    "over_7_5": 0.56688,
+    "over_8_0": 0.48656,
+    "over_8_5": 0.48656,
+    "over_9_0": 0.38886,
+    "over_9_5": 0.38886,
+    "over_10_0": 0.3213,
+    "over_10_5": 0.3213,
+    "over_11_0": 0.24504,
+    "over_11_5": 0.24504,
+    "over_12_0": 0.19588,
+    "over_12_5": 0.19588,
+    "over_13_0": 0.14256,
+    "over_13_5": 0.14256,
+    "over_14_0": 0.11052,
+    "over_14_5": 0.11052,
+    "over_15_0": 0.07774
+  },
+  "run_line_home_minus_1_5": 0.33762,
+  "run_line_away_plus_1_5": 0.66238,
+  "run_line_away_minus_1_5": 0.38052,
+  "run_line_home_plus_1_5": 0.61948
+}
