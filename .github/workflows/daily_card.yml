@@ -16,7 +16,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: claude/ev-sports-betting-bot-e1eaf1
+          ref: ${{ github.ref_name }}
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
