@@ -575,6 +575,9 @@ header{
 }
 .pick-row-left{min-width:0;flex:1}
 .pick-row-market{font-size:.83rem;font-weight:600;color:var(--t1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pick-row-stats{display:flex;gap:.75rem;margin-top:.25rem}
+.pick-row-stat{font-size:.62rem;color:var(--t2);font-family:'Consolas','Menlo',monospace}
+.pick-row-stat span{color:var(--t1);font-weight:600}
 .pick-row-proj{font-size:.64rem;color:var(--tm);margin-top:.2rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pick-row-right{display:flex;align-items:center;gap:1rem;flex-shrink:0}
 .pick-row-edge{font-size:1.05rem;font-weight:800;color:var(--win);font-family:'Consolas','Menlo',monospace;letter-spacing:-.01em}
@@ -1056,10 +1059,13 @@ if (!picks.length) {
     const rowsHtml=group.picks.map(p=>{
       const edge=((p.edge||0)*100).toFixed(1);
       const stake=(p.stake_units||0).toFixed(2);
+      const winPct=p.model_prob!=null?((p.model_prob)*100).toFixed(1):null;
+      const fairPct=p.fair_prob!=null?((p.fair_prob)*100).toFixed(1):null;
+      const statsHtml=(winPct||fairPct)?`<div class="pick-row-stats">${winPct?`<div class="pick-row-stat">Win <span>${winPct}%</span></div>`:''} ${fairPct?`<div class="pick-row-stat">Fair <span>${fairPct}%</span></div>`:''}</div>`:'';
       const proj=p.projected_score?`<div class="pick-row-proj">${p.projected_score}</div>`:'';
       return `<div class="pick-row">
         <div class="pick-row-left">
-          <div class="pick-row-market">${p.market||'?'}</div>${proj}
+          <div class="pick-row-market">${p.market||'?'}</div>${statsHtml}${proj}
         </div>
         <div class="pick-row-right">
           <span class="pick-row-edge">+${edge}%</span>
@@ -1162,13 +1168,16 @@ function initPerfCharts() {
   el.innerHTML = '<div class="game-list">' + tp.map(p=>{
     const edge=((p.edge||0)*100).toFixed(1);
     const stake=(p.stake_units||0).toFixed(2);
+    const winPct=p.model_prob!=null?((p.model_prob)*100).toFixed(1):null;
+    const fairPct=p.fair_prob!=null?((p.fair_prob)*100).toFixed(1):null;
+    const statsHtml=(winPct||fairPct)?`<div class="pick-row-stats">${winPct?`<div class="pick-row-stat">Win <span>${winPct}%</span></div>`:''} ${fairPct?`<div class="pick-row-stat">Fair <span>${fairPct}%</span></div>`:''}</div>`:'';
     const proj=p.projected_score?`<div class="pick-row-proj">${p.projected_score}</div>`:'';
     const dateStr=p.game_date?`<span class="game-date">${p.game_date}</span>`:'';
     return `<div class="pick-row" style="border-radius:8px;background:var(--surf2);padding:.75rem 1rem;margin-bottom:.5rem">
       <div class="pick-row-left">
         <div class="pick-row-market">${p.market||'?'}</div>
         <div style="font-size:.65rem;color:var(--tm);margin-top:.2rem">${p.event||''} ${dateStr}</div>
-        ${proj}
+        ${statsHtml}${proj}
       </div>
       <div class="pick-row-right">
         <span class="pick-row-edge">+${edge}%</span>
