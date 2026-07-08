@@ -46,9 +46,7 @@ jobs:
           MIN_EDGE_THRESHOLD: ${{ vars.MIN_EDGE_THRESHOLD || '0.03' }}
           MAX_KELLY_FRACTION: ${{ vars.MAX_KELLY_FRACTION || '0.20' }}
           MODEL_WEIGHT: ${{ vars.MODEL_WEIGHT || '0.40' }}
-          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          THE_ODDS_API_KEY: bf98ef1aaa018cd397ed786806cce19e
           USE_LOGIT_FACTORS: '1'
           USE_FULL_EXTRA_INNINGS: ${{ vars.USE_FULL_EXTRA_INNINGS || '0' }}
           ENABLE_EDGE_VERIFY_GATE: ${{ vars.ENABLE_EDGE_VERIFY_GATE || '0' }}
