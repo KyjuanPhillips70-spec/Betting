@@ -16,7 +16,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: claude/ev-sports-betting-bot-e1eaf1
+          ref: ${{ github.ref_name }}
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -37,6 +37,9 @@ jobs:
       - name: Initialize / migrate database
         run: python main.py --init-db
 
+      - name: Run tests
+        run: python -m pytest tests/ -v --tb=short
+
       - name: Run daily card (MLB + Soccer)
         run: python main.py --sport all --sims 5000
         env:
@@ -46,6 +49,12 @@ jobs:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          USE_LOGIT_FACTORS: '1'
+          USE_FULL_EXTRA_INNINGS: ${{ vars.USE_FULL_EXTRA_INNINGS || '0' }}
+          ENABLE_EDGE_VERIFY_GATE: ${{ vars.ENABLE_EDGE_VERIFY_GATE || '0' }}
+          EDGE_VERIFY_THRESHOLD: ${{ vars.EDGE_VERIFY_THRESHOLD || '0.065' }}
+          ENABLE_SAMPLE_GATE: ${{ vars.ENABLE_SAMPLE_GATE || '0' }}
+          MIN_PROP_SAMPLE: ${{ vars.MIN_PROP_SAMPLE || '40' }}
 
       - name: Upload database artifact
         if: always()
