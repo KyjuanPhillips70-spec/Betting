@@ -10,7 +10,18 @@ from datetime import date
 from loguru import logger
 
 BASE_URL = "https://statsapi.mlb.com/api"
-CURRENT_SEASON = 2026
+
+def _current_season() -> int:
+    """Derive MLB season from today's date (or MLB_SEASON env var override)."""
+    import os
+    override = os.getenv("MLB_SEASON", "").strip()
+    if override.isdigit():
+        return int(override)
+    today = date.today()
+    # MLB season runs roughly April–October; use previous year Jan–Mar
+    return today.year if today.month >= 3 else today.year - 1
+
+CURRENT_SEASON: int = _current_season()
 
 # Games in these abstract states are already underway or finished;
 # fetching pitcher/lineup data for them wastes API quota.
