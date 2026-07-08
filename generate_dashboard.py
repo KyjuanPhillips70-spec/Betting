@@ -220,9 +220,22 @@ def read_db(db_path: str) -> dict:
     today_str = date.today().isoformat()
     today_picks = [dict(r) for r in conn.execute("""
         SELECT sport, event, market, book, line,
-               model_prob, fair_prob, edge, stake_units, projected_score
+               model_prob, fair_prob, edge, stake_units, projected_score,
+               DATE(logged_at) AS game_date
         FROM bets_log
         WHERE DATE(logged_at) = ?
+          AND market NOT LIKE '% Batter %'
+          AND market NOT LIKE '% Pitcher %'
+        ORDER BY edge DESC
+    """, (today_str,))]
+
+    today_props = [dict(r) for r in conn.execute("""
+        SELECT sport, event, market, book, line,
+               model_prob, fair_prob, edge, stake_units, projected_score,
+               DATE(logged_at) AS game_date
+        FROM bets_log
+        WHERE DATE(logged_at) = ?
+          AND (market LIKE '% Batter %' OR market LIKE '% Pitcher %')
         ORDER BY edge DESC
     """, (today_str,))]
 
@@ -341,6 +354,7 @@ def read_db(db_path: str) -> dict:
         "generated_at":   datetime.now().strftime("%Y-%m-%d %H:%M:%S ET"),
         "today":          today_str,
         "today_picks":    today_picks,
+        "today_props":    today_props,
         "recent_bets":    bets[:100],
         "daily_pnl":      daily_rows,
         "top_markets":    top_markets,
@@ -515,6 +529,7 @@ header{
 }
 .game-hdr-right{display:flex;align-items:center;gap:.75rem;flex-shrink:0}
 .game-count{font-size:.68rem;color:var(--t2);font-variant-numeric:tabular-nums}
+.game-date{font-size:.63rem;color:var(--tm);flex-shrink:0;white-space:nowrap}
 .game-chevron{
   color:var(--tm);font-size:.7rem;
   transition:transform .2s ease;display:inline-block;
@@ -846,6 +861,11 @@ footer{
 
 <!-- Player Props -->
 <div id="tab-props" class="tab-panel">
+  <!-- Today's High EV Props -->
+  <div style="margin-bottom:1.5rem">
+    <div style="font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--t2);margin-bottom:.75rem">Today&#39;s High EV Props</div>
+    <div id="today-props-container"></div>
+  </div>
   <!-- List View -->
   <div id="props-list-view">
     <div class="prop-filter-bar">
@@ -1006,7 +1026,7 @@ if (!picks.length) {
   const byGame={};
   picks.forEach(p=>{
     const ev=p.event||'?';
-    if(!byGame[ev])byGame[ev]={sport:p.sport,picks:[]};
+    if(!byGame[ev])byGame[ev]={sport:p.sport,game_date:p.game_date||'',picks:[]};
     byGame[ev].picks.push(p);
   });
   const gameList=Object.entries(byGame).sort((a,b)=>
@@ -1038,6 +1058,7 @@ if (!picks.length) {
         <div class="game-hdr-left">
           <span class="sport-chip${isSoccer?' soccer':''}">${group.sport||'?'}</span>
           <span class="game-title">${event}</span>
+          ${group.game_date?`<span class="game-date">${group.game_date}</span>`:''}
         </div>
         <div class="game-hdr-right">
           <span class="game-count">${n} pick${n!==1?'s':''}</span>
@@ -1107,6 +1128,37 @@ function initPerfCharts() {
       '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--tm);font-size:.8rem">No data yet</div>';
   }
 }
+
+// ── Today's High EV Props ─────────────────────────────────────
+(function(){
+  const tp = D.today_props || [];
+  const el = document.getElementById('today-props-container');
+  if (!el) return;
+  if (!tp.length) {
+    el.innerHTML = '<div class="no-picks" style="margin-bottom:1.5rem">No high-EV player props for today yet.</div>';
+    return;
+  }
+  el.innerHTML = tp.map(p=>{
+    const edge=((p.edge||0)*100).toFixed(1);
+    const stake=(p.stake_units||0).toFixed(2);
+    const proj=p.projected_score?`<div class="pick-row-proj">${p.projected_score}</div>`:'';
+    return `<div class="pick-row">
+      <div class="pick-row-left">
+        <div class="pick-row-market">${p.market||'?'}</div>
+        <div style="font-size:.65rem;color:var(--tm)">${p.event||''}</div>
+        ${proj}
+      </div>
+      <div class="pick-row-right">
+        <span class="pick-row-edge">+${edge}%</span>
+        <span class="pick-row-line">${p.line||'?'}</span>
+        <div class="pick-row-meta">
+          <div class="pick-row-book">${p.book||'?'}</div>
+          <div class="pick-row-stake">${stake}u</div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+})();
 
 // ── Player Props ──────────────────────────────────────────────
 const propBets = D.prop_bets || [];
@@ -1758,7 +1810,7 @@ def generate(db_path: str, out_path: str) -> None:
         data = {
             "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S ET"),
             "today": date.today().isoformat(),
-            "today_picks": [], "recent_bets": [], "daily_pnl": [],
+            "today_picks": [], "today_props": [], "recent_bets": [], "daily_pnl": [],
             "top_markets": [], "sports": [], "prop_bets": [], "player_seasons": {}, "all_player_stats": {},
             "stats": {"total_picks":0,"n_resolved":0,"n_wins":0,"win_rate":0,
                       "roi":0,"total_profit":0,"avg_edge":0,"avg_clv":None},
