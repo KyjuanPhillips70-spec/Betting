@@ -27,10 +27,11 @@ from storage.database import (
     init_db, upsert_game, insert_bet_log, insert_odds_snapshot,
 )
 from ingestion.mlb_statsapi import (
-    assemble_pregame_bundle, get_batter_vs_pitcher,
+    assemble_pregame_bundle, get_batter_vs_pitcher, get_recent_batting_games,
 )
 from ingestion.weather import get_game_weather
 from ingestion.odds import get_odds, get_event_odds, parse_odds_to_snapshots
+import models.mlb_sim as mlb_sim
 from models.mlb_sim import (
     run_monte_carlo, build_dummy_lineup, PlayerProfile, LEAGUE_RATES
 )
@@ -260,6 +261,104 @@ def _blend_matchup_rates(base_rates: dict, matchup_stats: dict,
     return {k: v / total for k, v in blended.items()} if total > 0 else base_rates
 
 
+def _blend_recent_rates(season_rates: dict, recent_raw: dict,
+                         recency_weight: float = 0.40,
+                         min_sample: int = 20) -> dict:
+    """
+    Blend season rates 60/40 with rates derived from a recent-game raw stat dict.
+    Skips blending when the recent sample is below min_sample PA/BF.
+    Computes rates directly from raw counts to avoid the ≥50 PA floor
+    that would otherwise suppress small-sample recency signal.
+    """
+    if not recent_raw:
+        return season_rates
+    bf  = recent_raw.get("battersFaced", 0) or 0
+    ab  = recent_raw.get("atBats", 0) or 0
+    bb  = recent_raw.get("baseOnBalls", 0) or 0
+    hbp = recent_raw.get("hitBatsmen", recent_raw.get("hitByPitch", 0)) or 0
+    denom = bf if bf > 0 else (ab + bb + hbp)
+    if denom < min_sample:
+        return season_rates
+    k       = recent_raw.get("strikeOuts", 0) or 0
+    h       = recent_raw.get("hits", 0) or 0
+    hr      = recent_raw.get("homeRuns", 0) or 0
+    doubles = recent_raw.get("doubles", 0) or 0
+    triples = recent_raw.get("triples", 0) or 0
+    singles = max(h - doubles - triples - hr, 0)
+    in_play_outs = max(0.0, denom - k - bb - hbp - h)
+    recent_rates = {
+        "K_rate":   k / denom,
+        "BB_rate":  bb / denom,
+        "HBP_rate": hbp / denom,
+        "1B_rate":  singles / denom,
+        "2B_rate":  doubles / denom,
+        "3B_rate":  triples / denom,
+        "HR_rate":  hr / denom,
+        "out_rate": in_play_outs / denom,
+    }
+    blended = {
+        key: (1 - recency_weight) * season_rates.get(key, LEAGUE_RATES[key])
+             + recency_weight * recent_rates.get(key, season_rates.get(key, LEAGUE_RATES[key]))
+        for key in LEAGUE_RATES
+    }
+    total = sum(blended.values())
+    return {key: v / total for key, v in blended.items()} if total > 0 else season_rates
+
+
+def _calibrate_league_rates(games: list[dict]) -> None:
+    """
+    Aggregate team batting stats from today's game bundle to derive
+    current-season league averages, then overwrite mlb_sim.LEAGUE_RATES
+    in place so every log5 calculation uses live 2026 baselines.
+    Requires ≥4 teams with ≥200 PA each; otherwise leaves LEAGUE_RATES unchanged.
+    """
+    agg: dict[str, int] = {}
+    teams_used = 0
+    for game in games:
+        for side in ("home", "away"):
+            bat = game.get(f"{side}_team_batting", {})
+            ab  = bat.get("atBats", 0) or 0
+            bb  = bat.get("baseOnBalls", 0) or 0
+            hbp = bat.get("hitByPitch", 0) or 0
+            if ab + bb + hbp < 200:
+                continue
+            teams_used += 1
+            for key in ("atBats", "hits", "doubles", "triples", "homeRuns",
+                        "baseOnBalls", "hitByPitch", "strikeOuts"):
+                agg[key] = agg.get(key, 0) + (bat.get(key) or 0)
+    if teams_used < 4:
+        logger.warning("League calibration skipped — only {} teams with ≥200 PA", teams_used)
+        return
+    ab      = agg.get("atBats", 0)
+    h       = agg.get("hits", 0)
+    bb      = agg.get("baseOnBalls", 0)
+    hbp     = agg.get("hitByPitch", 0)
+    so      = agg.get("strikeOuts", 0)
+    hr      = agg.get("homeRuns", 0)
+    doubles = agg.get("doubles", 0)
+    triples = agg.get("triples", 0)
+    singles = max(h - doubles - triples - hr, 0)
+    pa = ab + bb + hbp
+    if pa < 1000:
+        logger.warning("League calibration skipped — only {} total PA across {} teams", pa, teams_used)
+        return
+    calibrated = {
+        "K_rate":   so / pa,
+        "BB_rate":  bb / pa,
+        "HBP_rate": hbp / pa,
+        "1B_rate":  singles / pa,
+        "2B_rate":  doubles / pa,
+        "3B_rate":  triples / pa,
+        "HR_rate":  hr / pa,
+        "out_rate": max(0.0, (ab - h)) / pa,
+    }
+    mlb_sim.LEAGUE_RATES.update(calibrated)
+    logger.info(
+        "League rates calibrated from {} teams ({} PA) — HR={:.3f} K={:.3f} BB={:.3f}",
+        teams_used, pa, calibrated["HR_rate"], calibrated["K_rate"], calibrated["BB_rate"],
+    )
+
+
 # ---------------------------------------------------------------------------
 # Profile builders
 # ---------------------------------------------------------------------------
@@ -316,6 +415,8 @@ def run_mlb(game_date: date | None = None, n_sims: int = 10_000) -> list[BetAler
     if not games:
         logger.info("No MLB games today.")
         return []
+
+    _calibrate_league_rates(games)
 
     odds_events = get_odds("mlb", markets="h2h,spreads,totals")
     odds_by_id: dict[str, list] = {}
@@ -418,14 +519,20 @@ def run_mlb(game_date: date | None = None, n_sims: int = 10_000) -> list[BetAler
             game.get("away_pitcher_hand", "R"), game.get("away_pitcher_stats", {})
         )
 
-        # Bullpen profiles from team pitching aggregate (innings 6+)
+        # Blend starter season rates with their last 3 outings (40% recency weight)
+        home_pitcher.rates = _blend_recent_rates(
+            home_pitcher.rates, game.get("home_pitcher_recent", {}), recency_weight=0.40)
+        away_pitcher.rates = _blend_recent_rates(
+            away_pitcher.rates, game.get("away_pitcher_recent", {}), recency_weight=0.40)
+
+        # Bullpen profiles from reliever-only stats (starters filtered out)
         home_bullpen = _build_pitcher_profile(
             None, f"{game.get('home_team','Home')} BP",
-            "R", game.get("home_team_pitching", {})
+            "R", game.get("home_team_bullpen") or game.get("home_team_pitching", {})
         )
         away_bullpen = _build_pitcher_profile(
             None, f"{game.get('away_team','Away')} BP",
-            "R", game.get("away_team_pitching", {})
+            "R", game.get("away_team_bullpen") or game.get("away_team_pitching", {})
         )
 
         # Blend each batter's season rates with batter-vs-opposing-starter history.
@@ -452,6 +559,23 @@ def run_mlb(game_date: date | None = None, n_sims: int = 10_000) -> list[BetAler
                     except Exception:
                         pass
                     time.sleep(0.10)
+
+        # Blend each confirmed batter's rates with their L15 game log (40% recency)
+        for lineup, has_confirmed in (
+            (home_lineup, len(home_lineup_stats) >= 7),
+            (away_lineup, len(away_lineup_stats) >= 7),
+        ):
+            if not has_confirmed:
+                continue
+            for profile in lineup:
+                if profile.player_id.isdigit():
+                    try:
+                        recent = get_recent_batting_games(int(profile.player_id), last_n=15)
+                        profile.rates = _blend_recent_rates(
+                            profile.rates, recent, recency_weight=0.40, min_sample=25)
+                    except Exception:
+                        pass
+                    time.sleep(0.08)
 
         try:
             sim = run_monte_carlo(

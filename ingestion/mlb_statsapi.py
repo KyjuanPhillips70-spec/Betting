@@ -194,15 +194,111 @@ def get_team_batting_stats(team_id: int, season: int = CURRENT_SEASON) -> dict:
 
 
 def get_team_pitching_stats(team_id: int, season: int = CURRENT_SEASON) -> dict:
-    """
-    Season aggregate team pitching stats — used as bullpen profile.
-    The aggregate blends starters + relievers but is dominated by bullpen
-    volume in later innings when the starter is gone.
-    """
+    """Season aggregate team pitching stats (all pitchers combined)."""
     data = _get(f"/v1/teams/{team_id}/stats",
                 {"stats": "season", "group": "pitching", "season": season})
     splits = _first_splits(data)
     return splits[0].get("stat", {}) if splits else {}
+
+
+def get_team_bullpen_stats(team_id: int, season: int = CURRENT_SEASON) -> dict:
+    """
+    Aggregate pitching stats for relievers only (innings 6+ proxy).
+    Strategy: fetch active roster, batch-get each pitcher's season stats,
+    exclude anyone whose GS/G ratio >= 0.40 (primarily a starter).
+    Falls back to team pitching aggregate when bullpen sample < 50 BF.
+    """
+    roster_data = _get(f"/v1/teams/{team_id}/roster",
+                        {"rosterType": "active", "season": season})
+    pitcher_ids = [
+        p["person"]["id"]
+        for p in roster_data.get("roster", [])
+        if p.get("position", {}).get("type") == "Pitcher"
+        and p.get("person", {}).get("id")
+    ]
+    if not pitcher_ids:
+        return get_team_pitching_stats(team_id, season)
+
+    ids_str = ",".join(str(pid) for pid in pitcher_ids)
+    data = _get("/v1/people", {
+        "personIds": ids_str,
+        "hydrate": f"stats(group=[pitching],type=[season],season={season})",
+    })
+
+    agg: dict[str, int] = {}
+    relievers_found = 0
+    for person in data.get("people", []):
+        stat: dict = {}
+        for grp in (person.get("stats") or []):
+            splits = grp.get("splits", [])
+            if splits:
+                stat = splits[0].get("stat", {})
+                break
+        bf = stat.get("battersFaced", 0) or 0
+        g  = stat.get("gamesPitched", 0) or 0
+        gs = stat.get("gamesStarted", 0) or 0
+        if bf < 10 or (g > 0 and gs / g >= 0.40):
+            continue
+        relievers_found += 1
+        for key in ("battersFaced", "strikeOuts", "baseOnBalls", "hitBatsmen",
+                    "hits", "homeRuns", "doubles", "triples"):
+            agg[key] = agg.get(key, 0) + (stat.get(key) or 0)
+
+    if relievers_found == 0 or agg.get("battersFaced", 0) < 50:
+        logger.warning("Team {} bullpen insufficient ({} relievers, {} BF) — using team aggregate",
+                       team_id, relievers_found, agg.get("battersFaced", 0))
+        return get_team_pitching_stats(team_id, season)
+
+    logger.debug("Team {} bullpen: {} relievers, {} BF aggregated", team_id, relievers_found, agg.get("battersFaced"))
+    return agg
+
+
+def get_recent_batting_games(person_id: int, last_n: int = 15,
+                              season: int = CURRENT_SEASON) -> dict:
+    """
+    Aggregate raw batting counts from a player's last N regular-season games.
+    Returns a stat dict compatible with _team_batting_to_rates().
+    Returns {} if no game log data is available.
+    """
+    data = _get(f"/v1/people/{person_id}/stats", {
+        "stats": "gameLog", "group": "hitting",
+        "season": season, "gameType": "R",
+    })
+    splits = _first_splits(data)
+    if not splits:
+        return {}
+    recent = splits[-last_n:]
+    agg: dict[str, int] = {}
+    for sp in recent:
+        s = sp.get("stat", {})
+        for key in ("atBats", "hits", "doubles", "triples", "homeRuns",
+                    "baseOnBalls", "hitByPitch", "strikeOuts"):
+            agg[key] = agg.get(key, 0) + (s.get(key) or 0)
+    return agg
+
+
+def get_recent_pitching_games(person_id: int, last_n: int = 3,
+                               season: int = CURRENT_SEASON) -> dict:
+    """
+    Aggregate raw pitching counts from a starter's last N outings.
+    Returns a stat dict compatible with _pitcher_stats_to_rates().
+    Returns {} if no game log data is available.
+    """
+    data = _get(f"/v1/people/{person_id}/stats", {
+        "stats": "gameLog", "group": "pitching",
+        "season": season, "gameType": "R",
+    })
+    splits = _first_splits(data)
+    if not splits:
+        return {}
+    recent = splits[-last_n:]
+    agg: dict[str, int] = {}
+    for sp in recent:
+        s = sp.get("stat", {})
+        for key in ("battersFaced", "strikeOuts", "baseOnBalls", "hitBatsmen",
+                    "hits", "homeRuns", "doubles", "triples"):
+            agg[key] = agg.get(key, 0) + (s.get(key) or 0)
+    return agg
 
 
 def get_live_feed(game_pk: str) -> dict:
@@ -235,13 +331,15 @@ def assemble_pregame_bundle(game_date: date | None = None) -> list[dict]:
                 game[f"{side}_pitcher_stats"]  = get_player_stats(pid, "pitching")
                 game[f"{side}_pitcher_splits"] = get_player_splits(pid, "pitching")
                 game[f"{side}_pitcher_hand"]   = get_pitcher_hand(pid)
+                game[f"{side}_pitcher_recent"] = get_recent_pitching_games(pid)
                 time.sleep(0.15)
 
             tid = game.get(f"{side}_team_id")
             if tid:
                 game[f"{side}_team_batting"]  = get_team_batting_stats(tid)
                 game[f"{side}_team_pitching"] = get_team_pitching_stats(tid)
-                time.sleep(0.10)
+                game[f"{side}_team_bullpen"]  = get_team_bullpen_stats(tid)
+                time.sleep(0.15)
 
             lineup_ids = game.get(f"{side}_lineup_ids", [])
             if lineup_ids:
